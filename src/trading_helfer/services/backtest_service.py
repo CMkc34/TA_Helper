@@ -6,10 +6,10 @@ Ergebnisspeicher (:class:`~trading_helfer.backtest.results.BacktestRunStore`) mi
 Oberfläche. Jede Methode öffnet die Datenbank selbst und schließt sie wieder, damit sie
 in einem Hintergrund-Thread laufen kann.
 
-**Universum**: Solange es keinen Portfolio-Backtest gibt (B-04), wird ein Index als
-Bündel unabhängiger Einzelwert-Backtests gerechnet: Das Startkapital wird gleichmäßig
-auf alle Werte verteilt, die im Zeitraum Indexmitglied waren und Kurse haben; die
-Equity-Kurven werden addiert. Das Protokoll des Laufs weist darauf hin.
+**Universum**: Ein Index wird mit dem Portfolio-Backtest
+(:func:`~trading_helfer.backtest.portfolio.run_portfolio_backtest`) gerechnet: gemeinsames
+Kapital, höchstens ``max_positions`` Positionen, Käufe nur für Werte, die am Tag ``t``
+Indexmitglied sind.
 
 Beispiel::
 
@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
@@ -35,8 +35,6 @@ import pandas as pd
 
 from trading_helfer.backtest.costs import CostModel
 from trading_helfer.backtest.engine import (
-    EQUITY_COLUMNS,
-    ORDER_COLUMNS,
     TRADE_COLUMNS,
     BacktestError,
     BacktestResult,
@@ -48,6 +46,7 @@ from trading_helfer.backtest.metrics import (
     metrics_for_result,
     monthly_returns,
 )
+from trading_helfer.backtest.portfolio import DEFAULT_MAX_POSITIONS, run_portfolio_backtest
 from trading_helfer.backtest.results import (
     BacktestRunStore,
     RunFilter,
@@ -73,7 +72,6 @@ __all__ = [
     "BacktestService",
     "BarsLoader",
     "UniverseKind",
-    "combine_results",
     "compare_runs",
     "format_metric_value",
     "trade_markers",
@@ -156,6 +154,7 @@ class BacktestRequest:
         slippage_pct: Slippage in Prozent.
         benchmark: Symbol des Benchmarks; leer = ohne Benchmark.
         save: Lauf in der Datenbank speichern.
+        max_positions: Höchstzahl gleichzeitiger Positionen (nur Index).
     """
 
     strategy_id: str
@@ -171,6 +170,7 @@ class BacktestRequest:
     slippage_pct: float = 0.05
     benchmark: str = DEFAULT_BENCHMARK
     save: bool = True
+    max_positions: int = DEFAULT_MAX_POSITIONS
 
     def costs(self) -> CostModel:
         """Kostenmodell aus Gebühren und Slippage."""
@@ -351,98 +351,6 @@ def trades_to_csv(trades: pd.DataFrame, path: Path | str) -> int:
     return len(frame)
 
 
-def combine_results(
-    results: Sequence[BacktestResult], universe: str, capital: float
-) -> BacktestResult:
-    """Fasst unabhängige Einzelwert-Läufe zu einem Ergebnis zusammen.
-
-    Equity und Cash werden je Datum addiert (vor dem ersten Datum eines Werts zählt sein
-    Startkapital), Trades, Orders, Protokoll und offene Positionen aneinandergehängt.
-
-    Args:
-        results: Einzelergebnisse (mindestens eines).
-        universe: Name des Universums (wird zum ``symbol`` des Ergebnisses).
-        capital: Gesamtes Startkapital.
-
-    Raises:
-        ValueError: ``results`` ist leer.
-    """
-    if not results:
-        raise ValueError("Keine Ergebnisse zum Zusammenfassen.")
-    first = results[0]
-    frames = [r.equity for r in results if not r.equity.empty]
-    if frames:
-        dates = pd.DatetimeIndex(
-            sorted({d for f in frames for d in pd.to_datetime(f["date"])}), name="date"
-        )
-    else:
-        dates = pd.DatetimeIndex([], name="date")
-    equity = np.zeros(len(dates))
-    cash = np.zeros(len(dates))
-    position_value = np.zeros(len(dates))
-    for r in results:
-        if r.equity.empty:
-            equity += r.initial_capital
-            cash += r.initial_capital
-            continue
-        f = r.equity.set_index(pd.DatetimeIndex(pd.to_datetime(r.equity["date"])))
-        aligned = f.reindex(dates).ffill()
-        eq = aligned["equity"].fillna(r.initial_capital).to_numpy(dtype=float)
-        equity += eq
-        cash += aligned["cash"].fillna(r.initial_capital).to_numpy(dtype=float)
-        position_value += aligned["exposure"].fillna(0.0).to_numpy(dtype=float) * eq
-    with np.errstate(divide="ignore", invalid="ignore"):
-        exposure = np.where(equity != 0, position_value / equity, 0.0)
-        peak = np.maximum.accumulate(equity) if len(equity) else equity
-        drawdown = np.where(peak > 0, equity / peak - 1.0, 0.0)
-    combined_equity = pd.DataFrame(
-        {
-            "date": dates.to_numpy(),
-            "equity": equity,
-            "cash": cash,
-            "exposure": exposure,
-            "drawdown": drawdown,
-        },
-        columns=list(EQUITY_COLUMNS),
-    )
-
-    trades = _concat([r.trades for r in results], TRADE_COLUMNS)
-    if not trades.empty:
-        trades = trades.sort_values(["entry_date", "symbol"], kind="stable", ignore_index=True)
-    orders = _concat([r.orders for r in results], ORDER_COLUMNS)
-    log = [f"{r.symbol}: {line}" for r in results for line in r.log]
-    warmups = [r.warmup_end for r in results if r.warmup_end is not None]
-    settings = dict(first.settings)
-    settings["capital"] = capital
-    settings["universe_mode"] = "Einzelwerte mit gleichem Kapitalanteil"
-    settings["symbols"] = [r.symbol for r in results]
-    return BacktestResult(
-        strategy_id=first.strategy_id,
-        strategy_version=first.strategy_version,
-        params=dict(first.params),
-        symbol=universe,
-        timeframe=first.timeframe,
-        start=first.start,
-        end=first.end,
-        settings=settings,
-        initial_capital=capital,
-        final_equity=float(sum(r.final_equity for r in results)),
-        trades=trades,
-        equity=combined_equity,
-        orders=orders,
-        log=log,
-        open_positions=[p for r in results for p in r.open_positions],
-        warmup_end=min(warmups) if warmups else None,
-    )
-
-
-def _concat(frames: Sequence[pd.DataFrame], columns: Sequence[str]) -> pd.DataFrame:
-    parts = [f for f in frames if not f.empty]
-    if not parts:
-        return frames[0].copy() if frames else pd.DataFrame(columns=list(columns))
-    return pd.concat(parts, ignore_index=True)
-
-
 class BacktestService:
     """Verbindet den Backtest-Tab mit Registry, Engine und Ergebnisspeicher.
 
@@ -477,6 +385,12 @@ class BacktestService:
     def strategies(self) -> list[StrategyInfo]:
         """Alle geladenen Strategien in Ladereihenfolge."""
         return self.registry.list_all()
+
+    def reload_strategies(self) -> None:
+        """Liest die Plugins neu ein (z. B. nach „Strategie hinzufügen“)."""
+        report = self.registry.reload()
+        for error in report.errors:
+            logger.warning("Strategie nicht geladen: %s", error)
 
     def strategy_params(self, strategy_id: str) -> dict[str, Param]:
         """Parameterbeschreibungen der Strategie ``strategy_id``."""
@@ -594,46 +508,26 @@ class BacktestService:
             raise BacktestError(
                 f"Für {INDEX_LABELS.get(code, code)} sind im Zeitraum keine Kurse gespeichert."
             )
-        cls = self.registry.get(request.strategy_id)
         bars: dict[str, pd.DataFrame] = {}
         for i, symbol in enumerate(symbols):
-            report(5 + int(15 * i / len(symbols)), f"Lade {symbol}")
-            bars[symbol] = self._bars_loader(symbol)
-        share = request.capital / len(symbols)
-        results: list[BacktestResult] = []
-        skipped: list[str] = []
-        for i, symbol in enumerate(symbols):
-            report(20 + int(65 * i / len(symbols)), f"Backtest {symbol} ({i + 1}/{len(symbols)})")
-            try:
-                if bars[symbol].empty:
-                    raise BacktestError(f"Für {symbol} sind keine Kurse gespeichert.")
-                results.append(self._run_one(cls, request, symbol, share, costs, bars[symbol]))
-            except BacktestError as exc:
-                skipped.append(f"{symbol}: {exc}")
-        if not results:
-            raise BacktestError(
-                "Kein Wert des Universums ließ sich rechnen:\n" + "\n".join(skipped[:10])
-            )
-        if skipped:
-            # Kapital nur auf rechenbare Werte verteilen, damit nichts ungenutzt bleibt.
-            share = request.capital / len(results)
-            results = [
-                self._run_one(cls, request, r.symbol, share, costs, bars[r.symbol]) for r in results
-            ]
-        combined = combine_results(results, code, request.capital)
-        notes = [
-            f"Universum {INDEX_LABELS.get(code, code)}: {len(results)} Werte, je "
-            f"{format_metric_value(request.capital / len(results), 'money')} Startkapital "
-            "(unabhängige Einzelwert-Backtests).",
-        ]
-        if index_universe.survivorship_risk(code, request.start):
-            notes.append(
-                "Achtung: Die Indexmitglieder vor "
-                f"{index_universe.reliable_since(code):%d.%m.%Y} sind unsicher "
-                "(Survivorship-Risiko)."
-            )
-        notes.extend(f"Übersprungen: {line}" for line in skipped)
-        return replace(combined, log=[*notes, *combined.log])
+            report(5 + int(25 * i / len(symbols)), f"Lade {symbol} ({i + 1}/{len(symbols)})")
+            frame = self._bars_loader(symbol)
+            if not frame.empty:
+                bars[symbol] = frame
+        report(30, f"Portfolio-Backtest über {len(bars)} Werte")
+        settings = self.settings.model_copy(update={"default_capital": request.capital})
+        return run_portfolio_backtest(
+            self.registry.get(request.strategy_id),
+            request.params,
+            code,
+            request.timeframe,
+            request.start,
+            request.end,
+            settings,
+            max_positions=request.max_positions,
+            bars=bars,
+            costs=costs,
+        )
 
     def _benchmark(self, symbol: str) -> pd.Series | None:
         if not symbol:

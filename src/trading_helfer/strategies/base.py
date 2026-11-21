@@ -370,6 +370,8 @@ class Order:
         trail_pct: Abstand des Trailing Stops in Prozent.
         trail_atr: Abstand des Trailing Stops in ATR-Vielfachen.
         tag: Freier Text, z. B. Grund des Signals (erscheint in der Trade-Liste).
+        strength: Signalstärke für die Rangfolge im Portfolio-Backtest (größer = besser),
+            wenn es mehr Einstiegssignale als freie Plätze gibt; ``None`` = keine Angabe.
     """
 
     symbol: str
@@ -382,6 +384,7 @@ class Order:
     trail_pct: float | None = None
     trail_atr: float | None = None
     tag: str = ""
+    strength: float | None = None
 
     def __post_init__(self) -> None:
         if not self.symbol:
@@ -398,6 +401,8 @@ class Order:
             value = getattr(self, name)
             if value is not None and (not math.isfinite(value) or value <= 0):
                 raise OrderError(f"{name} muss größer als 0 sein, erhalten: {value}.")
+        if self.strength is not None and not math.isfinite(self.strength):
+            raise OrderError(f"strength muss endlich sein, erhalten: {self.strength}.")
         self._check_type_fields()
 
     def _check_type_fields(self) -> None:
@@ -743,6 +748,7 @@ class BarContext:
         stop_price: float | None = None,
         limit_price: float | None = None,
         tag: str = "",
+        strength: float | None = None,
     ) -> Order:
         """Order, die eine Long-Position eröffnet oder aufstockt."""
         return Order(
@@ -754,6 +760,7 @@ class BarContext:
             stop_price=stop_price,
             limit_price=limit_price,
             tag=tag,
+            strength=strength,
         )
 
     def sell_short(
@@ -765,6 +772,7 @@ class BarContext:
         stop_price: float | None = None,
         limit_price: float | None = None,
         tag: str = "",
+        strength: float | None = None,
     ) -> Order:
         """Order, die eine Short-Position eröffnet oder aufstockt."""
         return Order(
@@ -776,6 +784,7 @@ class BarContext:
             stop_price=stop_price,
             limit_price=limit_price,
             tag=tag,
+            strength=strength,
         )
 
     def exit(

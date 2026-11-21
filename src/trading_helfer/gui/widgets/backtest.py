@@ -53,6 +53,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from trading_helfer.backtest.portfolio import DEFAULT_MAX_POSITIONS
 from trading_helfer.backtest.results import RunSummary
 from trading_helfer.core.markers import Marker
 from trading_helfer.core.types import Side, Timeframe
@@ -310,6 +311,11 @@ class BacktestWidget(QWidget):
         self.index_combo.setToolTip(texts.BACKTEST_UNIVERSE_HINT)
         form.addRow(self.symbol_edit)
         form.addRow(self.index_combo)
+        self.max_positions_spin = QSpinBox()
+        self.max_positions_spin.setRange(1, 500)
+        self.max_positions_spin.setValue(DEFAULT_MAX_POSITIONS)
+        self.max_positions_label = QLabel(texts.BACKTEST_MAX_POSITIONS)
+        form.addRow(self.max_positions_label, self.max_positions_spin)
 
         self.timeframe_combo = QComboBox()
         form.addRow(texts.BACKTEST_TIMEFRAME, self.timeframe_combo)
@@ -576,6 +582,25 @@ class BacktestWidget(QWidget):
             raise KeyError(strategy_id)
         self.strategy_combo.setCurrentIndex(index)
 
+    def select_strategy(self, strategy_id: str) -> bool:
+        """Übernimmt ``strategy_id`` ins Formular (z. B. aus dem Strategien-Tab).
+
+        Fehlt die Strategie, wird die Registry neu geladen (neu hinzugefügtes Plugin).
+
+        Returns:
+            ``True``, wenn die Strategie gewählt ist, sonst ``False`` (Hinweis im Tab).
+        """
+        if self.strategy_combo.findData(strategy_id) < 0:
+            self._service.reload_strategies()
+            self._fill_strategies()
+        try:
+            self.set_strategy(strategy_id)
+        except KeyError:
+            self._fail(texts.BACKTEST_UNKNOWN_STRATEGY.format(strategy=strategy_id))
+            return False
+        self.run_button.setEnabled(True)
+        return True
+
     def _on_strategy_changed(self, _index: int) -> None:
         strategy_id = self.strategy_id
         if strategy_id is None:
@@ -675,6 +700,8 @@ class BacktestWidget(QWidget):
         single = self.symbol_radio.isChecked()
         self.symbol_edit.setVisible(single)
         self.index_combo.setVisible(not single)
+        self.max_positions_spin.setVisible(not single)
+        self.max_positions_label.setVisible(not single)
 
     def set_symbol(self, symbol: str) -> None:
         """Wählt Einzelwert und trägt ``symbol`` ein (z. B. aus der Watchlist)."""
@@ -736,6 +763,7 @@ class BacktestWidget(QWidget):
             slippage_pct=float(self.slippage_spin.value()),
             benchmark=self.benchmark_edit.text().strip().upper(),
             save=self.save_checkbox.isChecked(),
+            max_positions=int(self.max_positions_spin.value()),
         )
 
     # -- Lauf ------------------------------------------------------------------------

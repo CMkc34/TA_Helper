@@ -19,6 +19,7 @@ from trading_helfer.backtest.engine import (
     BacktestResult,
 )
 from trading_helfer.backtest.metrics import compute_metrics
+from trading_helfer.backtest.portfolio import PortfolioResult
 from trading_helfer.backtest.results import RunNotFoundError
 from trading_helfer.core.config import Settings
 from trading_helfer.core.markers import MarkerKind
@@ -29,7 +30,6 @@ from trading_helfer.services.backtest_service import (
     BacktestRequest,
     BacktestService,
     UniverseKind,
-    combine_results,
     compare_runs,
     format_metric_value,
     metric_value,
@@ -195,14 +195,28 @@ def test_run_errors(service: BacktestService) -> None:
 
 def test_run_index_universe(service: BacktestService) -> None:
     # Vom Nasdaq-100 hat der Fake-Speicher nur MSFT; AAA ist kein Mitglied.
+    progress: list[str] = []
     outcome = service.run(
-        _request(universe="ndx100", universe_kind=UniverseKind.INDEX, capital=1000.0)
+        _request(
+            universe="ndx100",
+            universe_kind=UniverseKind.INDEX,
+            capital=1000.0,
+            max_positions=3,
+        ),
+        progress=lambda _p, m: progress.append(m),
     )
+    result = outcome.result
+    assert isinstance(result, PortfolioResult)
     assert outcome.universe == "NDX100"
-    assert outcome.result.symbol == "NDX100"
-    assert outcome.result.settings["symbols"] == ["MSFT"]
-    assert any("Universum Nasdaq-100" in line for line in outcome.result.log)
+    assert result.symbols == ("MSFT",)
+    assert result.max_positions == 3
+    assert result.initial_capital == 1000.0
+    assert set(result.trades["symbol"]) == {"MSFT"}
+    assert any("Portfolio-Backtest" in m for m in progress)
     assert service.list_runs()[0].universe == "NDX100"
+    loaded = service.load_run(outcome.run_id or "").result
+    assert loaded.final_equity == pytest.approx(result.final_equity)
+    assert len(loaded.trades) == len(result.trades)
 
 
 def test_run_index_errors(service: BacktestService, tmp_path: Path) -> None:
@@ -219,38 +233,24 @@ def test_run_index_errors(service: BacktestService, tmp_path: Path) -> None:
         bars_loader=lambda s: _loader("ZZZ"),
         symbols_loader=lambda: ["MSFT"],
     )
-    with pytest.raises(BacktestError, match="ließ sich rechnen"):
+    with pytest.raises(BacktestError, match="Keine Kurse"):
         broken.run(_request(universe="NDX100", universe_kind=UniverseKind.INDEX))
 
 
-def test_index_skips_failing_symbols(tmp_path: Path) -> None:
-    bars = {"MSFT": BARS["MSFT"], "AAPL": BARS["AAA"].iloc[:0]}
-    svc = BacktestService(
-        Settings(data_dir=tmp_path / "d"),
-        _registry(),
-        bars_loader=lambda s: bars.get(s, BARS["SPY"]),
-        symbols_loader=lambda: ["AAPL", "MSFT"],
+def test_reload_strategies(tmp_path: Path) -> None:
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    svc = BacktestService(Settings(data_dir=tmp_path / "d", plugins_dir=plugins))
+    assert "plug_cross" not in [s.id for s in svc.strategies()]
+    (plugins / "bad.py").write_text("this is not python", encoding="utf-8")
+    (plugins / "plug.py").write_text(
+        (Path(__file__).parents[1] / "fixtures/good_strategies/sma_cross.py").read_text(
+            encoding="utf-8"
+        ),
+        encoding="utf-8",
     )
-    outcome = svc.run(_request(universe="NDX100", universe_kind=UniverseKind.INDEX, save=False))
-    assert outcome.result.settings["symbols"] == ["MSFT"]
-    assert any(line.startswith("Übersprungen: AAPL") for line in outcome.result.log)
-    assert outcome.result.initial_capital == 1000.0
-
-
-def test_combine_results_adds_equity(service: BacktestService) -> None:
-    a = service.run(_request(save=False, capital=500.0)).result
-    b = service.run(_request(save=False, universe="MSFT", capital=500.0)).result
-    combined = combine_results([a, b], "MIX", 1000.0)
-    assert combined.initial_capital == 1000.0
-    assert combined.final_equity == pytest.approx(a.final_equity + b.final_equity)
-    assert combined.equity["equity"].iloc[-1] == pytest.approx(
-        a.equity["equity"].iloc[-1] + b.equity["equity"].iloc[-1]
-    )
-    assert (combined.equity["drawdown"] <= 0).all()
-    assert len(combined.trades) == len(a.trades) + len(b.trades)
-    assert set(combined.trades["symbol"]) == {"AAA", "MSFT"}
-    with pytest.raises(ValueError, match="Keine Ergebnisse"):
-        combine_results([], "X", 1.0)
+    svc.reload_strategies()
+    assert len(svc.strategies()) > 3
 
 
 def test_strategy_queries_and_defaults(service: BacktestService) -> None:
@@ -336,11 +336,7 @@ def test_outcome_without_equity() -> None:
     )
     metrics = compute_metrics(equity, None, Timeframe.D1, initial_capital=100.0)
     assert metrics.num_trades == 0
-    result = combine_results(
-        [replace(_empty_result(), equity=equity.iloc[:0], final_equity=100.0)],
-        "X",
-        100.0,
-    )
+    result = replace(_empty_result(), equity=equity.iloc[:0], final_equity=100.0)
     outcome = BacktestOutcome(result, None, "X", benchmark=BARS["SPY"].set_index("date")["close"])
     assert outcome.symbols == []
     assert outcome.benchmark_equity() is None

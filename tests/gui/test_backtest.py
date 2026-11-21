@@ -597,3 +597,47 @@ def test_tab_does_not_widen_main_window(
     win = MainWindow(service, backtest_service=bt_service)
     qtbot.addWidget(win)
     assert win.backtest.minimumSizeHint().width() < win.chart.minimumSizeHint().width()
+
+
+def test_max_positions_only_for_index(widget: BacktestWidget) -> None:
+    widget.show()
+    widget.set_symbol("AAA")
+    assert not widget.max_positions_spin.isVisible()
+    widget.set_index("SP500")
+    assert widget.max_positions_spin.isVisible()
+    widget.max_positions_spin.setValue(7)
+    assert widget.request().max_positions == 7
+
+
+def test_select_strategy(qtbot: QtBot, widget: BacktestWidget) -> None:
+    assert widget.select_strategy("test_mixed")
+    assert widget.strategy_id == "test_mixed"
+    assert widget.run_button.isEnabled()
+
+
+def test_select_unknown_strategy_reloads(qtbot: QtBot, tmp_path: Path) -> None:
+    svc = BacktestService(Settings(data_dir=tmp_path / "d"), bars_loader=_loader)
+    w = BacktestWidget(svc)
+    qtbot.addWidget(w)
+    calls: list[int] = []
+    original = svc.reload_strategies
+    svc.reload_strategies = lambda: calls.append(1) or original()  # type: ignore[method-assign]
+    assert w.select_strategy("mr_rsi2_trend")
+    assert calls == []
+    with qtbot.waitSignal(w.failed) as signal:
+        assert not w.select_strategy("gibt_es_nicht")
+    assert calls == [1]
+    assert "gibt_es_nicht" in signal.args[0]
+
+
+def test_strategies_tab_opens_strategy_in_backtest(
+    qtbot: QtBot, tmp_path: Path, dialogs: list[tuple[str, str]]
+) -> None:
+    service = AppService(Settings(data_dir=tmp_path / "app"), tmp_path / "state.json")
+    win = MainWindow(service)
+    qtbot.addWidget(win)
+    win.strategies.refresh()
+    qtbot.waitUntil(lambda: len(win.strategies.rows()) >= 3)
+    win.open_in_backtest("trend_donchian_breakout")
+    assert win.tabs.currentWidget() is win.backtest
+    assert win.backtest.strategy_id == "trend_donchian_breakout"
