@@ -26,9 +26,13 @@ def test_cli_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
     assert trading_helfer.__version__ in capsys.readouterr().out
 
 
-def test_cli_without_command_prints_version(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main([]) == 0
-    assert trading_helfer.__version__ in capsys.readouterr().out
+def test_cli_without_command_starts_gui(monkeypatch: pytest.MonkeyPatch) -> None:
+    import trading_helfer.gui.application as application
+
+    calls: list[bool] = []
+    monkeypatch.setattr(application, "run_gui", lambda: calls.append(True) or 7)
+    assert main([]) == 7
+    assert calls == [True]
 
 
 def test_network_is_blocked_in_tests() -> None:
