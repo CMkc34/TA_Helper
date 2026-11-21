@@ -12,6 +12,7 @@ import pandas as pd
 import pytest
 
 from trading_helfer.core.bars import BarsValidationError
+from trading_helfer.data.schema import discover_migrations
 from trading_helfer.data.storage import (
     LOADED_BAR_COLUMNS,
     MarketStore,
@@ -30,7 +31,10 @@ EXPECTED_TABLES = {
     "backtest_trades",
     "backtest_equity",
     "signals",
+    "provider_requests",
 }
+ALL_VERSIONS = [m.version for m in discover_migrations()]
+LATEST_VERSION = ALL_VERSIONS[-1]
 
 
 def make_bars(
@@ -90,8 +94,8 @@ def table_names(store: MarketStore) -> set[str]:
 def test_new_database_has_all_tables(tmp_path: Path) -> None:
     db = tmp_path / "sub" / "market.duckdb"
     with MarketStore(db) as store:
-        assert store.applied_migrations == [1]
-        assert store.schema_version() == 1
+        assert store.applied_migrations == ALL_VERSIONS
+        assert store.schema_version() == LATEST_VERSION
         assert table_names(store) == EXPECTED_TABLES
         assert store.path == str(db)
     assert db.exists()
@@ -103,9 +107,9 @@ def test_reopening_runs_no_migration_twice(tmp_path: Path) -> None:
         store.upsert_bars("AAPL", make_bars())
     with MarketStore(db) as store:
         assert store.applied_migrations == []
-        assert store.schema_version() == 1
+        assert store.schema_version() == LATEST_VERSION
         rows = store.connection.execute("SELECT count(*) FROM schema_version").fetchall()
-        assert rows[0][0] == 1
+        assert rows[0][0] == len(ALL_VERSIONS)
         assert len(store.load_bars("AAPL")) == 5
 
 
@@ -114,7 +118,7 @@ def test_read_only_skips_migrations(tmp_path: Path) -> None:
     MarketStore(db).close()
     with MarketStore(db, read_only=True) as store:
         assert store.applied_migrations == []
-        assert store.schema_version() == 1
+        assert store.schema_version() == LATEST_VERSION
 
 
 def test_new_migration_is_applied_on_next_open(tmp_path: Path) -> None:
