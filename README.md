@@ -21,6 +21,27 @@ uv run trading-helfer            # App starten
 uv run trading-helfer --version  # Version anzeigen
 ```
 
+## Options-Schnappschüsse
+
+Kostenlose historische Optionsdaten gibt es nicht. Der Befehl `options-snapshot` speichert
+deshalb die aktuellen Optionsketten (yfinance) als Schnappschuss des Tages in der Tabelle
+`option_snapshots`; so entsteht ab dem ersten Lauf eine eigene Historie.
+
+```bash
+uv run trading-helfer options-snapshot                       # Watchlist „Eigene“
+uv run trading-helfer options-snapshot --watchlist "Nasdaq-100" --max-expiries 6
+uv run trading-helfer options-snapshot --symbols SPY QQQ AAPL
+```
+
+Ein zweiter Lauf am selben Tag ersetzt den Schnappschuss, am Wochenende gilt der Freitag
+als Stichtag. Täglich nach Börsenschluss über die Windows-Aufgabenplanung, z. B. um
+22:30 Uhr:
+
+```bat
+schtasks /Create /SC WEEKLY /D MO,TUE,WED,THU,FRI /ST 22:30 /TN "Trading Helfer Optionen" ^
+  /TR "cmd /c cd /d C:\Pfad\zum\Repo && uv run trading-helfer options-snapshot"
+```
+
 ## Tests und Prüfungen
 
 ```bash

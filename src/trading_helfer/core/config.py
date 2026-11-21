@@ -46,6 +46,7 @@ __all__ = [
     "default_config_path",
     "default_data_dir",
     "load_settings",
+    "update_config_file",
     "write_default_config",
 ]
 
@@ -256,6 +257,53 @@ def write_default_config(path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_HEADER + tomli_w.dumps(_default_file_values()), encoding="utf-8")
     return path
+
+
+def update_config_file(path: Path, values: dict[str, Any]) -> Settings:
+    """Ändert einzelne Einträge der ``config.toml`` und lädt die Einstellungen neu.
+
+    Die übrigen Einträge der Datei bleiben erhalten; Kommentare werden durch den
+    Standardkopf ersetzt. Ein Wert ``None`` entfernt den Eintrag (es gilt dann der
+    Standardwert). Die Werte werden vor dem Schreiben geprüft, eine ungültige Änderung
+    lässt die Datei unverändert.
+
+    Args:
+        path: Pfad der TOML-Datei; fehlt sie, wird sie mit Standardwerten angelegt.
+        values: Zu setzende Einträge, z. B. ``{"providers": ["tiingo", "yfinance"]}``.
+
+    Returns:
+        Die neu geladenen Einstellungen.
+
+    Raises:
+        ConfigError: wenn die Datei kein gültiges TOML ist, nicht geschrieben werden kann
+            oder die neuen Werte ungültig sind.
+    """
+    if path.exists():
+        try:
+            data: dict[str, Any] = tomllib.loads(path.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError as exc:
+            raise ConfigError(f"Konfigurationsdatei {path} ist kein gültiges TOML: {exc}") from exc
+    else:
+        data = _default_file_values()
+    for key, value in values.items():
+        if value is None:
+            data.pop(key, None)
+        elif isinstance(value, SecretStr):
+            data[key] = value.get_secret_value()
+        else:
+            data[key] = value
+    try:
+        Settings.model_validate(data)
+    except ValidationError as exc:
+        raise _to_config_error(exc, path) from exc
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_HEADER + tomli_w.dumps(data), encoding="utf-8")
+    except OSError as exc:
+        raise ConfigError(
+            f"Konfigurationsdatei {path} kann nicht geschrieben werden: {exc}"
+        ) from exc
+    return load_settings(path, create=False)
 
 
 @contextmanager

@@ -22,12 +22,14 @@ from trading_helfer import __version__
 from trading_helfer.gui import texts
 from trading_helfer.gui.theme import apply_theme
 from trading_helfer.gui.widgets.chart import ChartWidget
+from trading_helfer.gui.widgets.data import DataWidget
 from trading_helfer.gui.widgets.fundamentals import FundamentalsWidget
 from trading_helfer.gui.widgets.strategies import StrategiesWidget
 from trading_helfer.gui.widgets.watchlist import WatchlistWidget
 from trading_helfer.gui.worker import Worker, WorkerError
 from trading_helfer.services.app_service import AppService, ThemeName
 from trading_helfer.services.chart_service import ChartService
+from trading_helfer.services.data_service import DataService
 from trading_helfer.services.fundamentals_service import FundamentalsService
 from trading_helfer.services.indicator_service import TEMPLATES_FILE_NAME, IndicatorService
 from trading_helfer.services.strategy_service import StrategyService
@@ -70,6 +72,9 @@ class MainWindow(QMainWindow):
             ist ein :class:`FundamentalsService` ohne Datenbank (leere Kennzahlen).
         strategy_service: Liefert die Strategien für den Strategien-Tab; Standard ist
             ein :class:`StrategyService` für den Plugin-Ordner aus den Einstellungen.
+        data_service: Datenupdate, Qualitätsbericht und Quellen für den Daten-Tab;
+            Standard ist ein :class:`DataService` mit den Einstellungen von ``service``,
+            der Änderungen nur im Speicher hält.
     """
 
     def __init__(
@@ -80,6 +85,7 @@ class MainWindow(QMainWindow):
         chart_service: ChartService | None = None,
         fundamentals_service: FundamentalsService | None = None,
         strategy_service: StrategyService | None = None,
+        data_service: DataService | None = None,
     ) -> None:
         super().__init__(parent)
         self.service = service
@@ -114,10 +120,20 @@ class MainWindow(QMainWindow):
             if strategy_service is not None
             else StrategyService(service.settings.plugins_path)
         )
-        self.strategies = StrategiesWidget(self.strategy_service, runner=self.run_task)
+        self.strategies = StrategiesWidget(
+            self.strategy_service, runner=self.run_task, load_on_show=True
+        )
         self.strategies.open_in_backtest.connect(self.open_in_backtest)
         self.set_view("strategies", self.strategies)
         self.backtest_strategy: str | None = None
+
+        self.data_service = (
+            data_service if data_service is not None else DataService(service.settings)
+        )
+        self.data = DataWidget(self.data_service, runner=self.run_task)
+        self.data.update_finished.connect(self._on_data_changed)
+        self.data.csv_imported.connect(self._on_data_changed)
+        self.set_view("data", self.data)
 
         self.watchlist = WatchlistWidget(service)
         self.watchlist.symbol_selected.connect(self._on_symbol_selected)
@@ -235,11 +251,23 @@ class MainWindow(QMainWindow):
         on_result: Callable[[Any], None] | None = None,
         name: str = texts.TASK_DEFAULT_NAME,
         report_progress: bool = False,
+        on_progress: Callable[[int, str], None] | None = None,
+        on_error: Callable[[WorkerError], None] | None = None,
         **kwargs: Any,
     ) -> Worker:
         """Startet ``fn`` im Thread-Pool; Fortschritt landet in der Statusleiste.
 
         Fehler werden geloggt und als Dialog gezeigt; die App läuft weiter.
+
+        Args:
+            fn: Auszuführende Funktion.
+            *args: Positionsargumente für ``fn``.
+            on_result: Erhält das Ergebnis im GUI-Thread.
+            name: Name der Aufgabe für Statusleiste und Fehlerdialog.
+            report_progress: ``fn`` erhält einen ``progress``-Rückruf.
+            on_progress: Erhält zusätzlich Prozent und Meldung im GUI-Thread.
+            on_error: Erhält den Fehler im GUI-Thread (zusätzlich zum Dialog).
+            **kwargs: Schlüsselwortargumente für ``fn``.
         """
         worker = Worker(fn, *args, report_progress=report_progress, name=name, **kwargs)
         worker.setAutoDelete(False)
@@ -249,8 +277,12 @@ class MainWindow(QMainWindow):
                 texts.STATUS_PROGRESS.format(name=name, percent=percent, message=message).strip()
             )
         )
+        if on_progress is not None:
+            worker.signals.progress.connect(on_progress)
         if on_result is not None:
             worker.signals.result.connect(on_result)
+        if on_error is not None:
+            worker.signals.error.connect(on_error)
         worker.signals.result.connect(
             lambda _r: self.statusBar().showMessage(texts.STATUS_DONE.format(name=name))
         )
@@ -286,6 +318,11 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentWidget(backtest)
         name = self.strategy_service.registry.info(strategy_id).name
         self.statusBar().showMessage(texts.STRATEGIES_STATUS_BACKTEST.format(name=name))
+
+    def _on_data_changed(self, _result: object) -> None:
+        """Verwirft zwischengespeicherte Kurse und Kennzahlen nach Update oder Import."""
+        self.chart_service.invalidate()
+        self.fundamentals_service.invalidate()
 
     def _on_symbol_selected(self, symbol: str) -> None:
         self.statusBar().showMessage(texts.STATUS_SYMBOL.format(symbol=symbol))

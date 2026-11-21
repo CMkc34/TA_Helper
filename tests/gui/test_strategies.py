@@ -307,6 +307,9 @@ def test_main_window_has_strategies_tab_and_opens_backtest(
     win = MainWindow(service, strategy_service=strategy_service)
     qtbot.addWidget(win)
     assert win.tab_widget("strategies") is win.strategies
+    assert win.strategies.rows() == []  # erst beim Anzeigen laden
+    win.show()
+    win.tabs.setCurrentWidget(win.strategies)
     qtbot.waitUntil(lambda: len(win.strategies.rows()) >= 3)
 
     win.strategies.select("trend_donchian_breakout")
@@ -335,6 +338,7 @@ def test_main_window_calls_select_strategy_of_backtest_tab(
     assert win.strategy_service.plugins_dir == service.settings.plugins_path
     fake = FakeBacktest()
     win.set_view("backtest", fake)
+    win.strategies.refresh()
     qtbot.waitUntil(lambda: len(win.strategies.rows()) >= 3)
     win.open_in_backtest("mr_rsi2_trend")
     assert fake.selected == ["mr_rsi2_trend"]

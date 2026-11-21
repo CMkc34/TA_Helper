@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QFontDatabase
+from PySide6.QtGui import QBrush, QColor, QFont, QFontDatabase, QShowEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -98,6 +98,8 @@ class StrategiesWidget(QWidget):
         service: Liefert Liste und Details, prüft und speichert Plugins.
         runner: Startet lange Aufgaben, z. B. :meth:`MainWindow.run_task`; ohne Angabe
             läuft alles sofort im GUI-Thread.
+        load_on_show: Liste erst laden, wenn der Tab zum ersten Mal sichtbar wird (spart
+            Zeit beim Start); sonst sofort im Konstruktor.
     """
 
     open_in_backtest = Signal(str)
@@ -111,10 +113,13 @@ class StrategiesWidget(QWidget):
         service: StrategyService,
         runner: TaskRunner | None = None,
         parent: QWidget | None = None,
+        *,
+        load_on_show: bool = False,
     ) -> None:
         super().__init__(parent)
         self._service = service
         self._runner: TaskRunner = runner if runner is not None else _run_inline
+        self._loaded = False
         self._rows: list[StrategyRow] = []
         self._pending_select: str | None = None
         self.dialog: AddStrategyDialog | None = None
@@ -179,7 +184,14 @@ class StrategiesWidget(QWidget):
         layout.addWidget(splitter, 1)
 
         self._show_details(None)
-        self.refresh()
+        if not load_on_show:
+            self.refresh()
+
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 (Qt-Override)
+        """Lädt die Liste beim ersten Anzeigen, falls noch nicht geschehen."""
+        super().showEvent(event)
+        if not self._loaded:
+            self.refresh()
 
     # -- Öffentliche API ---------------------------------------------------------------
 
@@ -205,6 +217,7 @@ class StrategiesWidget(QWidget):
 
     def refresh(self, *, reload: bool = False, select: str | None = None) -> None:
         """Lädt die Liste (mit ``reload`` auch den Plugin-Ordner neu) im Hintergrund."""
+        self._loaded = True
         self._pending_select = select if select is not None else self.selected_key()
         self._runner(
             self._load_rows, reload, on_result=self._show_rows, name=texts.STRATEGIES_TASK_LOAD

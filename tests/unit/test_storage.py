@@ -26,6 +26,7 @@ EXPECTED_TABLES = {
     "bars_daily",
     "corporate_actions",
     "fundamentals",
+    "option_snapshots",
     "update_log",
     "backtest_runs",
     "backtest_trades",

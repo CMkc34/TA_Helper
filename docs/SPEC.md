@@ -59,7 +59,7 @@ Keine kostenlose Quelle deckt alles ab, deshalb bekommt die App eine Provider-Sc
 
 - Indexmitglieder mit Ein- und Austrittsdatum für S&P 500 und Nasdaq-100. Quelle: Änderungslisten der Wikipedia-Artikel, als CSV im Repo gepflegt (Issue D-05).
 - Kurse früherer Mitglieder: yfinance liefert für viele delistete Ticker keine Daten mehr. Fehlende Werte werden im Datenqualitätsbericht ausgewiesen, nicht stillschweigend ignoriert.
-- Optionsdaten mit Historie gibt es kostenlos nicht. Für Phase 6 wird das gesondert entschieden (z. B. eigene tägliche Snapshots ab Start oder ein Bezahlanbieter).
+- Optionsdaten mit Historie gibt es kostenlos nicht. Umsetzung O-01: ab Start speichert `trading-helfer options-snapshot` täglich die aktuellen Ketten der Watchlist über yfinance (`data/option_snapshots.py`, Tabelle `option_snapshots`). Ob für echte Historie ein Bezahlanbieter dazukommt, wird vor der Feinspezifikation der weiteren Phase-6-Issues entschieden.
 
 Die Kaggle-Seite ließ sich nur als Kurzbeschreibung lesen. Ich prüfe Lizenz und Spalten, sobald du den Datensatz herunterlädst oder mir die Datei gibst.
 
@@ -135,6 +135,7 @@ Gespeichert werden nur Tageskurse; 3D, 1W und 1M werden beim Laden berechnet und
 | `backtest_trades` | `run_id, trade_id` | symbol, side, entry\_date, entry\_price, exit\_date, exit\_price, qty, pnl, pnl\_pct, fees, exit\_reason | Trade-Liste |
 | `backtest_equity` | `run_id, date` | equity, cash, exposure, drawdown | Equity-Kurve |
 | `signals` | `scan_id, symbol, date` | strategy\_id, signal (BUY, SELL, EXIT), strength, note | Ergebnisse des Scanners |
+| `option_snapshots` | `symbol, snapshot_date, expiry, strike, type` | bid, ask, last, volume, open\_interest, iv, underlying\_price, source | Tägliche Schnappschüsse der Optionsketten (O-01), type = CALL oder PUT |
 
 **Bereinigte Kurse**: `adj_factor` = adj\_close / close. Indikatoren und Backtests rechnen mit bereinigten OHLC-Werten (open, high, low, close jeweils × adj\_factor). Der Chart zeigt wahlweise roh oder bereinigt, Standard ist bereinigt.
 
