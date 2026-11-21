@@ -12,6 +12,10 @@ Registriert wird mit dem Decorator :func:`indicator`::
 
 Indikatoren mit einer Ausgabe liefern eine ``pd.Series`` mit dem Namen der Ausgabe,
 solche mit mehreren Ausgaben ein ``pd.DataFrame`` mit genau den Spalten ``outputs``.
+
+Optional legt ``styles`` je Ausgabe die Darstellung im Chart fest (``line`` ist der
+Standard, außerdem ``histogram``, ``dots`` und ``hidden`` für Hilfswerte wie eine
+Trendrichtung, die nicht gezeichnet werden).
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ __all__ = [
     "IndicatorError",
     "IndicatorFunc",
     "IndicatorSpec",
+    "OutputStyle",
     "Pane",
     "get",
     "indicator",
@@ -36,10 +41,14 @@ __all__ = [
 Pane = Literal["price", "separate"]
 """Anzeigeart: ``price`` im Kurs-Chart, ``separate`` in einem eigenen Panel."""
 
+OutputStyle = Literal["line", "histogram", "dots", "hidden"]
+"""Darstellung einer Ausgabe im Chart."""
+
 IndicatorFunc = Callable[..., "pd.Series[float] | pd.DataFrame"]
 """Signatur einer Indikatorfunktion: ``f(df, **params)``."""
 
 _PANES: frozenset[str] = frozenset({"price", "separate"})
+_STYLES: frozenset[str] = frozenset({"line", "histogram", "dots", "hidden"})
 _REGISTRY: dict[str, IndicatorSpec] = {}
 
 
@@ -57,6 +66,7 @@ class IndicatorSpec:
         params: Parameternamen mit Standardwerten (unveränderlich).
         pane: Anzeigeart im Chart.
         outputs: Namen der Ausgaben in fester Reihenfolge.
+        styles: Darstellung je Ausgabe; fehlende Ausgaben sind ``line``.
     """
 
     name: str
@@ -64,6 +74,15 @@ class IndicatorSpec:
     params: Mapping[str, Any] = field(default_factory=dict)
     pane: Pane = "separate"
     outputs: tuple[str, ...] = ()
+    styles: Mapping[str, OutputStyle] = field(default_factory=dict)
+
+    def style(self, output: str) -> OutputStyle:
+        """Darstellung der Ausgabe ``output`` im Chart (Standard ``line``)."""
+        return self.styles.get(output, "line")
+
+    def visible_outputs(self) -> tuple[str, ...]:
+        """Ausgaben, die der Chart zeichnet (alle außer ``hidden``)."""
+        return tuple(name for name in self.outputs if self.style(name) != "hidden")
 
     def compute(self, df: pd.DataFrame, **params: Any) -> pd.DataFrame:
         """Berechnet den Indikator und liefert immer ein DataFrame mit den Ausgaben.
@@ -96,6 +115,7 @@ def indicator(
     params: Mapping[str, Any] | None = None,
     pane: Pane = "separate",
     outputs: Iterable[str] | None = None,
+    styles: Mapping[str, OutputStyle] | None = None,
 ) -> Callable[[IndicatorFunc], IndicatorFunc]:
     """Decorator, der eine Indikatorfunktion unter ``name`` registriert.
 
@@ -104,18 +124,28 @@ def indicator(
         params: Parameternamen mit Standardwerten.
         pane: ``"price"`` (im Kurs-Chart) oder ``"separate"`` (eigenes Panel).
         outputs: Namen der Ausgaben; Standard ist ``[name]``.
+        styles: Darstellung je Ausgabe (``line``, ``histogram``, ``dots``, ``hidden``).
 
     Returns:
         Decorator, der die Funktion unverändert zurückgibt.
 
     Raises:
-        IndicatorError: Name schon vergeben, ungültige Anzeigeart oder leere Ausgaben.
+        IndicatorError: Name schon vergeben, ungültige Anzeige- oder Darstellungsart,
+            leere Ausgaben.
     """
     if pane not in _PANES:
         raise IndicatorError(f"Ungültige Anzeigeart {pane!r}; erlaubt: price, separate.")
     output_names = tuple(outputs) if outputs is not None else (name,)
     if not output_names:
         raise IndicatorError(f"Indikator {name!r} braucht mindestens eine Ausgabe.")
+    style_map = dict(styles or {})
+    for output, style in style_map.items():
+        if output not in output_names:
+            raise IndicatorError(f"Darstellung für unbekannte Ausgabe {output!r} von {name!r}.")
+        if style not in _STYLES:
+            raise IndicatorError(
+                f"Ungültige Darstellung {style!r}; erlaubt: line, histogram, dots, hidden."
+            )
 
     def decorator(func: IndicatorFunc) -> IndicatorFunc:
         if name in _REGISTRY:
@@ -126,6 +156,7 @@ def indicator(
             params=MappingProxyType(dict(params or {})),
             pane=pane,
             outputs=output_names,
+            styles=MappingProxyType(style_map),
         )
         return func
 

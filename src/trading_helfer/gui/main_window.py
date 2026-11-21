@@ -28,6 +28,7 @@ from trading_helfer.gui.worker import Worker, WorkerError
 from trading_helfer.services.app_service import AppService, ThemeName
 from trading_helfer.services.chart_service import ChartService
 from trading_helfer.services.fundamentals_service import FundamentalsService
+from trading_helfer.services.indicator_service import TEMPLATES_FILE_NAME, IndicatorService
 
 __all__ = ["TABS", "MainWindow"]
 
@@ -91,7 +92,10 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.tabs)
 
         self.chart_service = chart_service if chart_service is not None else ChartService()
-        self.chart = ChartWidget(self.chart_service, runner=self.run_task)
+        self.indicator_service = IndicatorService(service.state_path.parent / TEMPLATES_FILE_NAME)
+        self.chart = ChartWidget(
+            self.chart_service, runner=self.run_task, indicator_service=self.indicator_service
+        )
         self.set_view("chart", self.chart)
 
         self.fundamentals_service = (
