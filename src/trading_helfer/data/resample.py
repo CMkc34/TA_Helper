@@ -101,18 +101,16 @@ def resample(df_daily: pd.DataFrame, timeframe: Timeframe) -> pd.DataFrame:
         return daily
 
     dates = pd.DatetimeIndex(daily[DATE_COLUMN])
-    sessions = _sessions(dates[0], dates[-1])
+    years = _session_years(dates[0], dates[-1])
+    sessions = _calendar_sessions(*years)
+    session_keys, period_end = _period_ends(timeframe, *years)
     if timeframe is Timeframe.W1:
         day_keys = _week_keys(dates)
-        session_keys = _week_keys(sessions)
     elif timeframe is Timeframe.MN1:
         day_keys = _month_keys(dates)
-        session_keys = _month_keys(sessions)
     else:
-        day_keys, session_keys = _keys_3d(dates, sessions)
+        day_keys = _keys_3d(dates, sessions)[0]
 
-    # Letzter Handelstag und Anzahl Handelstage je Zeitraum laut Kalender.
-    period_end = pd.Series(sessions, index=session_keys).groupby(level=0).max()
     bars = _aggregate(daily, day_keys)
     ends = period_end.reindex(bars.index)
     last_date = dates[-1]
@@ -209,14 +207,14 @@ def _data_key(df_daily: pd.DataFrame) -> tuple[Any, ...]:
     return (dates.max(), dates.min(), len(df_daily))
 
 
-def _sessions(first: pd.Timestamp, last: pd.Timestamp) -> pd.DatetimeIndex:
-    """Handelstage, die die Daten, den 3D-Anker und alle betroffenen Zeiträume abdecken."""
+def _session_years(first: pd.Timestamp, last: pd.Timestamp) -> tuple[int, int]:
+    """Kalenderjahre, die die Daten, den 3D-Anker und alle betroffenen Zeiträume abdecken."""
     start = min(first, _CALENDAR_START)
     end = max(last, ANCHOR_3D) + _CALENDAR_MARGIN
     # Endjahr auf ein Vielfaches von _CALENDAR_YEAR_STEP runden, damit der Kalender
     # selten neu aufgebaut wird.
     end_year = -(-end.year // _CALENDAR_YEAR_STEP) * _CALENDAR_YEAR_STEP
-    return _calendar_sessions(start.year, end_year)
+    return start.year, end_year
 
 
 @lru_cache(maxsize=8)
@@ -232,6 +230,22 @@ def _calendar_sessions(start_year: int, end_year: int) -> pd.DatetimeIndex:
         )
     sessions = pd.DatetimeIndex(calendar.sessions).tz_localize(None)
     return pd.DatetimeIndex(sessions.as_unit("ns"))
+
+
+@lru_cache(maxsize=16)
+def _period_ends(
+    timeframe: Timeframe, start_year: int, end_year: int
+) -> tuple[np.ndarray[Any, Any], pd.Series]:
+    """Schlüssel je Handelstag und letzter Handelstag je Zeitraum (zwischengespeichert)."""
+    sessions = _calendar_sessions(start_year, end_year)
+    if timeframe is Timeframe.W1:
+        session_keys = _week_keys(sessions)
+    elif timeframe is Timeframe.MN1:
+        session_keys = _month_keys(sessions)
+    else:
+        session_keys = _keys_3d(sessions[:1], sessions)[1]
+    period_end = pd.Series(sessions, index=session_keys).groupby(level=0).max()
+    return session_keys, period_end
 
 
 def _week_keys(dates: pd.DatetimeIndex) -> np.ndarray[Any, Any]:
