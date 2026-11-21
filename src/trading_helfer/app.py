@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import multiprocessing
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -16,6 +18,21 @@ DEFAULT_OPTIONS_WATCHLIST = "Eigene"
 """Watchlist, deren Optionsketten ``options-snapshot`` ohne weitere Angabe speichert."""
 
 
+SELFTEST_STDOUT = Path("-")
+"""Wert von ``--selftest`` ohne Datei: Bericht nur auf der Konsole."""
+
+
+def ensure_std_streams() -> None:
+    """Ersetzt fehlende ``stdout``/``stderr`` durch ``os.devnull``.
+
+    Das Fenster-Paket (PyInstaller ohne Konsole) startet mit ``sys.stdout = None``;
+    ``print`` und Logging würden dann abstürzen.
+    """
+    for name in ("stdout", "stderr"):
+        if getattr(sys, name) is None:
+            setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))  # noqa: SIM115
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Erzeugt den Argument-Parser mit allen Unterbefehlen."""
     parser = argparse.ArgumentParser(
@@ -23,6 +40,16 @@ def build_parser() -> argparse.ArgumentParser:
         description="Trading Helfer: technische Analyse, Kennzahlen und Backtesting.",
     )
     parser.add_argument("--version", action="version", version=f"trading-helfer {__version__}")
+    parser.add_argument(
+        "--selftest",
+        nargs="?",
+        const=SELFTEST_STDOUT,
+        default=None,
+        type=Path,
+        metavar="BERICHT",
+        help="Selbsttest: Paket prüfen, Hauptfenster kurz zeigen und beenden "
+        "(Exit-Code 0 = bestanden); optional Bericht in die Datei BERICHT schreiben",
+    )
     commands = parser.add_subparsers(dest="command", metavar="<befehl>")
     quality = commands.add_parser(
         "quality",
@@ -140,8 +167,17 @@ def _run_import_csv(args: argparse.Namespace) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Startet ohne Unterbefehl die GUI und gibt den Exit-Code zurück."""
+    # Im gebauten Paket starten Kindprozesse (Strategie-Prüfung, Portfolio-Vorberechnung)
+    # dieselbe .exe; freeze_support() übernimmt sie, bevor die GUI startet.
+    multiprocessing.freeze_support()
+    ensure_std_streams()
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.selftest is not None:
+        from trading_helfer.gui.application import run_selftest
+
+        report = None if args.selftest == SELFTEST_STDOUT else args.selftest
+        return run_selftest(report_path=report)
     if args.command is None:
         # Erst hier importieren, damit Unterbefehle ohne Qt auskommen.
         from trading_helfer.gui.application import run_gui

@@ -4,7 +4,17 @@ Lokale Desktop-App für technische Analyse, Kennzahlen und Backtesting von US-Ak
 
 Details: [docs/SPEC.md](docs/SPEC.md).
 
-## Installation
+## Installation (Windows-Paket, ohne Python)
+
+1. Unter [Releases](https://github.com/CMkc34/TA_Helper/releases) die Datei `TradingHelfer-<version>-windows-x64.zip` laden.
+2. Entpacken, z. B. nach `C:\Programme\TradingHelfer` oder in den eigenen Benutzerordner.
+3. `TradingHelfer.exe` starten. Für Unterbefehle (`update`, `scan`, `options-snapshot`, `import-csv`) gibt es im selben Ordner `trading-helfer.exe` mit Konsole, z. B. für die Windows-Aufgabenplanung.
+
+Datenbank, Einstellungen, Logs und Plugins liegen im Benutzerverzeichnis (`%LOCALAPPDATA%\trading-helfer`), nicht im App-Ordner. Für ein Update den App-Ordner einfach durch die neue Version ersetzen.
+
+`trading-helfer.exe --selftest` prüft das Paket (Datenbank, Indexdaten, Strategien, Hauptfenster) mit einem temporären Ordner und endet mit Exit-Code 0, wenn alles in Ordnung ist.
+
+## Installation (Entwicklung)
 
 Voraussetzungen: Python 3.12 und [uv](https://docs.astral.sh/uv/).
 
@@ -20,6 +30,16 @@ uv sync
 uv run trading-helfer            # App starten
 uv run trading-helfer --version  # Version anzeigen
 ```
+
+## Paket bauen
+
+```bash
+uv sync --group package
+uv run pyinstaller packaging/trading_helfer.spec --noconfirm   # Ergebnis: dist/TradingHelfer/
+dist/TradingHelfer/trading-helfer --selftest
+```
+
+In CI baut der Workflow „Paket“ das Zip unter Windows und prüft es mit `--selftest` auf einem Runner ohne Python. Ein Tag `v<version>` (passend zu `pyproject.toml`) veröffentlicht das Zip als Release.
 
 ## Options-Schnappschüsse
 
