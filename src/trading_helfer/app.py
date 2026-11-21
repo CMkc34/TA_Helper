@@ -33,7 +33,58 @@ def build_parser() -> argparse.ArgumentParser:
     quality.add_argument(
         "--csv", type=Path, default=None, help="Bericht zusätzlich als CSV-Datei speichern"
     )
+
+    import_csv = commands.add_parser(
+        "import-csv",
+        help="Tageskurse aus CSV-Dateien (z. B. Kaggle) importieren",
+        description=(
+            "Importiert Tageskurse aus einer CSV-Datei oder allen CSV-Dateien eines Ordners. "
+            "Abgelehnte Zeilen stehen im Fehlerbericht <pfad>.fehler.csv."
+        ),
+    )
+    import_csv.add_argument("path", type=Path, metavar="<pfad>", help="CSV-Datei oder Ordner")
+    import_csv.add_argument(
+        "--mapping",
+        type=Path,
+        metavar="datei.toml",
+        help='TOML-Datei mit [columns] Quellspalte = "zielspalte"',
+    )
+    import_csv.add_argument(
+        "--date-format", metavar="FORMAT", help="Datumsformat, z. B. %%d.%%m.%%Y"
+    )
+    import_csv.add_argument(
+        "--db", type=Path, metavar="datei.duckdb", help="Datenbank (Standard: aus Einstellungen)"
+    )
     return parser
+
+
+def _run_import_csv(args: argparse.Namespace) -> int:
+    """Führt ``import-csv`` aus und gibt den Exit-Code zurück."""
+    from trading_helfer.data.providers.csv_import import (
+        CsvMappingError,
+        import_csv,
+        load_mapping,
+    )
+    from trading_helfer.data.storage import MarketStore
+
+    path: Path = args.path
+    try:
+        mapping = load_mapping(args.mapping) if args.mapping else None
+        db_path = args.db
+        if db_path is None:
+            from trading_helfer.core.config import load_settings
+
+            db_path = load_settings().database_path
+        with MarketStore(db_path) as store:
+            report = import_csv(store, path, mapping, date_format=args.date_format)
+    except CsvMappingError as exc:
+        print(f"Fehler: {exc}", file=sys.stderr)
+        return 2
+    print(report.summary())
+    if report.errors:
+        error_file = report.write_errors(path.with_name(path.name + ".fehler.csv"))
+        print(f"Fehlerbericht: {error_file}")
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -47,6 +98,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_gui()
     if args.command == "quality":
         return run_quality(args.symbols, db_path=args.db, csv_path=args.csv)
+    if args.command == "import-csv":
+        return _run_import_csv(args)
     return 0  # pragma: no cover - weitere Unterbefehle folgen in späteren Issues
 
 
