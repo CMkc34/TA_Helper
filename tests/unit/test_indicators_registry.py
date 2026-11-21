@@ -95,3 +95,34 @@ def test_no_lookahead(bars: pd.DataFrame, spec: registry.IndicatorSpec, t: int) 
     for seed in range(3):
         changed = spec.compute(_perturb_after(bars, t, seed))
         pd.testing.assert_frame_equal(original.iloc[: t + 1], changed.iloc[: t + 1])
+
+
+def test_styles(temp_name: str) -> None:
+    @indicator(
+        temp_name,
+        pane="separate",
+        outputs=["a", "b", "c"],
+        styles={"b": "histogram", "c": "hidden"},
+    )
+    def func(df: pd.DataFrame) -> pd.DataFrame:
+        return df
+
+    spec = registry.get(temp_name)
+    assert spec.style("a") == "line"
+    assert spec.style("b") == "histogram"
+    assert spec.visible_outputs() == ("a", "b")
+
+
+@pytest.mark.parametrize(
+    ("styles", "message"),
+    [({"x": "line"}, "unbekannte Ausgabe"), ({"a": "bogus"}, "Ungültige Darstellung")],
+)
+def test_invalid_styles(temp_name: str, styles: dict[str, str], message: str) -> None:
+    with pytest.raises(IndicatorError, match=message):
+        indicator(temp_name, outputs=["a"], styles=styles)  # type: ignore[arg-type]
+
+
+def test_builtin_styles() -> None:
+    assert registry.get("macd").style("hist") == "histogram"
+    assert registry.get("psar").style("psar") == "dots"
+    assert registry.get("supertrend").visible_outputs() == ("supertrend",)
