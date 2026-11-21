@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 from typing import ClassVar
@@ -65,10 +66,15 @@ def test_scan_500_symbols_weekly_under_20_seconds(tmp_path: Path) -> None:
             )
             store.upsert_bars(symbol, bars)
 
-        started = time.perf_counter()
-        result = scan(SmaCross, None, symbols, Timeframe.W1, store=store)
-        elapsed = time.perf_counter() - started
+        # Gemessen wird der Scan selbst, nicht der Aufwand der Abdeckungsmessung.
+        tracer = sys.gettrace()
+        sys.settrace(None)
+        try:
+            started = time.perf_counter()
+            result = scan(SmaCross, None, symbols, Timeframe.W1, store=store)
+            elapsed = time.perf_counter() - started
+        finally:
+            sys.settrace(tracer)
 
-    print(f"Scan: {elapsed:.2f} s")
     assert not result.attrs["skipped"]
     assert elapsed < LIMIT_SECONDS, f"Scan dauerte {elapsed:.2f} s"
