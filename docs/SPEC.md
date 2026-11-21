@@ -65,6 +65,8 @@ Die Kaggle-Seite ließ sich nur als Kurzbeschreibung lesen. Ich prüfe Lizenz un
 
 **Daten vor 2000**: Tiingo nennt „30+ Jahre“ Historie, yfinance liefert für viele Werte ebenfalls Kurse vor 2000. Der Standard-Startpunkt ist deshalb 1990-01-01, das Update lädt jeweils ab dem frühesten verfügbaren Datum. Die Indexmitglieder vor 2000 sind unsicherer, Backtests in diesem Zeitraum werden als Survivorship-Risiko markiert (D-05).
 
+**Indexmitglieder, Stand D-05 (21.11.2026)**: Wikipedias „Selected changes“ sind unvollständig, eine reine Rückwärtsrechnung daraus ergibt für 2000 nur rund 414 S&P-500-Mitglieder. Basis sind deshalb die frei lizenzierten Datensätze fja05680/sp500 (S&P 500 ab 1996) und jmccarrell/n100tickers (Nasdaq-100 ab 2003), danach Pflege über Wikipedia (`scripts/build_universe.py`). Auch diese Basis hat für 2000–2004 nur 491–494 S&P-500-Mitglieder; der Plausibilitätstest erlaubt dort 490–510, ab 2005 495–510 (mit der Person abgestimmt). Details: `src/trading_helfer/data/universe/SOURCES.md`.
+
 ## Tech-Stack und Architektur
 
 Die Logik (Daten, Indikatoren, Backtest, Strategien) ist reines Python ohne GUI-Abhängigkeit; die GUI ruft sie nur über Services auf. So lässt sich alles ohne Bildschirm testen, und eine spätere Automatisierung nutzt dieselben Module.
