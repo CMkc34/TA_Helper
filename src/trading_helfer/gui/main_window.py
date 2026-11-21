@@ -60,7 +60,7 @@ class MainWindow(QMainWindow):
         service: Fassade zur Logik; liefert Einstellungen und speichert den GUI-Zustand.
         thread_pool: Pool für Hintergrundaufgaben; Standard ist der globale Pool.
         chart_service: Liefert die Kerzen für den Chart-Tab; Standard ist ein
-            :class:`ChartService` ohne Kursspeicher (leere Charts).
+            :class:`ChartService` ohne Kursquelle (leere Charts).
     """
 
     def __init__(

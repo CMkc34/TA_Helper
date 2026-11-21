@@ -9,11 +9,13 @@ import pytest
 
 from trading_helfer.core.bars import BarsValidationError, empty_bars
 from trading_helfer.core.types import Timeframe
+from trading_helfer.data.storage import MarketStore
 from trading_helfer.services.chart_service import (
     CHART_COLUMNS,
     ChartService,
     adjust_prices,
     empty_loader,
+    store_loader,
 )
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "chart" / "SYNTH_daily.csv"
@@ -140,3 +142,19 @@ def test_daily_cache_is_bounded(daily: pd.DataFrame) -> None:
     service.daily_bars("S0")
     assert calls.count("S19") == 1
     assert calls.count("S0") == 2
+
+
+def test_store_loader_reads_raw_bars(tmp_path: Path, daily: pd.DataFrame) -> None:
+    db_path = tmp_path / "market.duckdb"
+    loader = store_loader(db_path)
+    assert loader("SYNTH").empty  # Datei fehlt noch
+    with MarketStore(db_path) as store:
+        store.upsert_bars("SYNTH", daily)
+    service = ChartService(loader)
+    raw = service.load("SYNTH", Timeframe.D1, adjusted=False).bars
+    adjusted = service.load("SYNTH", Timeframe.D1).bars
+    assert len(raw) == 475
+    assert raw["close"].iloc[0] == pytest.approx(daily["close"].iloc[0])
+    assert adjusted["close"].iloc[0] == pytest.approx(daily["adj_close"].iloc[0])
+    assert len(service.load("SYNTH", Timeframe.MN1)) == 23
+    assert service.load("FEHLT", Timeframe.D1).is_empty

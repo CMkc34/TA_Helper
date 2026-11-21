@@ -1,8 +1,9 @@
 """Fassade für den Chart: Tageskurse laden, bereinigen und in Zeitrahmen umrechnen.
 
 Das Modul importiert kein Qt. Woher die Tageskurse kommen, bestimmt ein Loader
-(``symbol -> DataFrame`` im Schema aus :mod:`trading_helfer.core.bars`); solange es
-keinen Kursspeicher gibt, liefert der Standard-Loader leere Kursreihen.
+(``symbol -> DataFrame`` im Schema aus :mod:`trading_helfer.core.bars`). Die App nutzt
+:func:`store_loader` (DuckDB-Kursspeicher); ohne Angabe liefert :func:`empty_loader`
+leere Kursreihen.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Final
 
 import pandas as pd
@@ -23,6 +25,7 @@ from trading_helfer.core.bars import (
 )
 from trading_helfer.core.types import Timeframe
 from trading_helfer.data.resample import PARTIAL_COLUMN, ResampleCache
+from trading_helfer.data.storage import MarketStore
 
 __all__ = [
     "CHART_COLUMNS",
@@ -31,6 +34,7 @@ __all__ = [
     "DailyBarsLoader",
     "adjust_prices",
     "empty_loader",
+    "store_loader",
 ]
 
 DailyBarsLoader = Callable[[str], pd.DataFrame]
@@ -46,6 +50,26 @@ def empty_loader(symbol: str) -> pd.DataFrame:
     """Standard-Loader ohne Kursspeicher: gibt für jedes Symbol eine leere Kursreihe zurück."""
     del symbol
     return empty_bars()
+
+
+def store_loader(db_path: Path) -> DailyBarsLoader:
+    """Loader, der rohe Tageskurse samt ``adj_close`` aus dem Kursspeicher liest.
+
+    Jeder Aufruf öffnet die Datenbank nur lesend und schließt sie wieder, damit der
+    Loader in Hintergrund-Threads laufen kann. Fehlt die Datenbankdatei, ist das
+    Ergebnis leer.
+
+    Args:
+        db_path: Pfad der DuckDB-Datei (``Settings.database_path``).
+    """
+
+    def load(symbol: str) -> pd.DataFrame:
+        if not db_path.exists():
+            return empty_bars()
+        with MarketStore(db_path, read_only=True) as store:
+            return store.load_bars(symbol, adjusted=False)
+
+    return load
 
 
 def adjust_prices(daily: pd.DataFrame) -> pd.DataFrame:
