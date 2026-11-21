@@ -146,6 +146,7 @@ def wma(df: pd.DataFrame, period: int = 20, source: str = "close") -> pd.Series[
     params={"fast": 12, "slow": 26, "signal": 9, "source": "close"},
     pane="separate",
     outputs=["macd", "signal", "hist"],
+    styles={"hist": "histogram"},
 )
 def macd(
     df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9, source: str = "close"
@@ -300,6 +301,7 @@ def ichimoku(df: pd.DataFrame, tenkan: int = 9, kijun: int = 26, senkou: int = 5
     params={"acceleration": 0.02, "maximum": 0.2},
     pane="price",
     outputs=["psar"],
+    styles={"psar": "dots"},
 )
 def parabolic_sar(
     df: pd.DataFrame, acceleration: float = 0.02, maximum: float = 0.2
@@ -398,6 +400,7 @@ def atr_wilder(df: pd.DataFrame, period: int = 14) -> pd.Series[float]:
     params={"period": 10, "multiplier": 3.0},
     pane="price",
     outputs=["supertrend", "direction"],
+    styles={"direction": "hidden"},
 )
 def supertrend(df: pd.DataFrame, period: int = 10, multiplier: float = 3.0) -> pd.DataFrame:
     """Supertrend auf Basis der Wilder-ATR.

@@ -1,7 +1,8 @@
 """Datenquelle Yahoo Finance über das Paket ``yfinance``.
 
-Liefert rohe Tageskurse plus bereinigten Schlusskurs, Splits und Dividenden sowie
-Stammdaten. Symbole werden in Yahoo-Schreibweise übersetzt (``BRK.B`` → ``BRK-B``).
+Liefert rohe Tageskurse plus bereinigten Schlusskurs, Splits und Dividenden,
+Stammdaten, Fundamentaldaten und aktuelle Optionsketten. Symbole werden in
+Yahoo-Schreibweise übersetzt (``BRK.B`` → ``BRK-B``).
 
 Fehlerbehandlung: ``yfinance`` verschluckt Fehler standardmäßig und liefert dann ein
 leeres Ergebnis. Damit Netzwerkfehler von unbekannten Symbolen unterscheidbar sind,
@@ -34,10 +35,12 @@ from trading_helfer.core.bars import BAR_COLUMNS, PRICE_COLUMNS, empty_bars, val
 from trading_helfer.data.fundamentals import empty_fundamentals, normalize_fundamentals
 from trading_helfer.data.providers.base import (
     ACTION_COLUMNS,
+    OPTION_CHAIN_COLUMNS,
     ActionType,
     InstrumentInfo,
     ProviderError,
     empty_actions,
+    empty_option_chain,
 )
 from trading_helfer.data.providers.rate_limit import (
     DEFAULT_RETRY_DELAYS,
@@ -69,6 +72,17 @@ _ACTION_SOURCE_COLUMNS: Final[Mapping[str, ActionType]] = {
     "Stock Splits": ActionType.SPLIT,
     "Dividends": ActionType.DIVIDEND,
 }
+
+_OPTION_SOURCE_COLUMNS: Final[Mapping[str, str]] = {
+    "strike": "strike",
+    "bid": "bid",
+    "ask": "ask",
+    "lastPrice": "last",
+    "volume": "volume",
+    "openInterest": "open_interest",
+    "impliedVolatility": "iv",
+}
+"""Spalten von ``Ticker.option_chain(...).calls/.puts`` → Spalten der Optionskette."""
 
 _STATEMENT_METRICS: Final[Mapping[str, Mapping[str, tuple[str, ...]]]] = {
     "income": {
@@ -139,6 +153,19 @@ class TickerLike(Protocol):
         """Stammdaten wie ``yfinance.Ticker.info``."""
         ...
 
+    @property
+    def options(self) -> tuple[str, ...]:
+        """Verfallstage als ``YYYY-MM-DD`` wie ``yfinance.Ticker.options``."""
+        ...
+
+    def option_chain(self, date: str | None = None, *args: Any, **kwargs: Any) -> Any:
+        """Kette eines Verfallstags wie ``yfinance.Ticker.option_chain``.
+
+        Das Ergebnis hat die Attribute ``calls``, ``puts`` (DataFrames) und
+        ``underlying`` (Kursdaten des Basiswerts als Mapping).
+        """
+        ...
+
     def get_income_stmt(self, *args: Any, **kwargs: Any) -> pd.DataFrame:
         """Gewinn- und Verlustrechnung wie ``yfinance.Ticker.get_income_stmt``."""
         ...
@@ -182,8 +209,9 @@ class YFinanceProvider:
     """Kurse, Corporate Actions und Stammdaten von Yahoo Finance.
 
     Erfüllt :class:`~trading_helfer.data.providers.base.PriceProvider`,
-    :class:`~trading_helfer.data.providers.base.InstrumentProvider` und
-    :class:`~trading_helfer.data.providers.base.FundamentalsProvider`.
+    :class:`~trading_helfer.data.providers.base.InstrumentProvider`,
+    :class:`~trading_helfer.data.providers.base.FundamentalsProvider` und
+    :class:`~trading_helfer.data.providers.base.OptionChainProvider`.
     """
 
     name: str = PROVIDER_NAME
@@ -348,6 +376,95 @@ class YFinanceProvider:
         combined = pd.concat([f for f in frames if not f.empty] or [empty_fundamentals()])
         return normalize_fundamentals(combined)
 
+    def fetch_option_chain(self, symbol: str, max_expiries: int | None = None) -> pd.DataFrame:
+        """Aktuelle Optionskette (Calls und Puts) über alle oder die nächsten Verfallstage.
+
+        Yahoo liefert nur den aktuellen Stand, keine Historie. Je Verfallstag ist das
+        eine Anfrage, dazu eine für die Liste der Verfallstage.
+
+        Args:
+            symbol: Symbol in App-Schreibweise (z. B. ``BRK.B``).
+            max_expiries: Nur die nächsten ``n`` Verfallstage; ``None`` = alle.
+
+        Returns:
+            Spalten :data:`~trading_helfer.data.providers.base.OPTION_CHAIN_COLUMNS`,
+            sortiert nach Verfall, Art und Basispreis; leer, wenn Yahoo das Symbol nicht
+            kennt oder es keine Optionen hat.
+
+        Raises:
+            ValueError: Das Symbol ist leer oder ``max_expiries`` ist kleiner als 1.
+            ProviderError: Yahoo war nach allen Versuchen nicht erreichbar oder
+                antwortete fehlerhaft.
+        """
+        if max_expiries is not None and max_expiries < 1:
+            raise ValueError("max_expiries muss mindestens 1 sein.")
+        yahoo_symbol = to_yahoo_symbol(symbol)
+        expiries = self._call(symbol, lambda: self._ticker_factory(yahoo_symbol).options)
+        if not expiries:
+            return empty_option_chain()
+        if not isinstance(expiries, tuple | list):
+            raise ProviderError(
+                self.name, symbol, f"Unerwartete Verfallstage vom Typ {type(expiries).__name__}."
+            )
+        selected = sorted(str(e) for e in expiries)
+        if max_expiries is not None:
+            selected = selected[:max_expiries]
+        frames: list[pd.DataFrame] = []
+        for expiry in selected:
+
+            def request(expiry: str = expiry) -> Any:
+                return self._ticker_factory(yahoo_symbol).option_chain(expiry)
+
+            chain = self._call(symbol, request)
+            if chain is None:
+                continue
+            frames.append(self._normalize_option_chain(symbol, expiry, chain))
+        frames = [f for f in frames if not f.empty]
+        if not frames:
+            return empty_option_chain()
+        result = pd.concat(frames, ignore_index=True)
+        result = result.sort_values(["expiry", "type", "strike"], kind="mergesort")
+        return result.reset_index(drop=True)
+
+    def _normalize_option_chain(self, symbol: str, expiry: str, chain: Any) -> pd.DataFrame:
+        """Calls und Puts eines Verfallstags in das Format der Optionskette."""
+        try:
+            expiry_ts = pd.Timestamp(expiry)
+        except ValueError as exc:
+            raise ProviderError(self.name, symbol, f"Ungültiger Verfallstag {expiry!r}.") from exc
+        underlying = _underlying_price(getattr(chain, "underlying", None))
+        parts: list[pd.DataFrame] = []
+        for attribute, option_type in (("calls", "CALL"), ("puts", "PUT")):
+            raw = getattr(chain, attribute, None)
+            if not isinstance(raw, pd.DataFrame):
+                raise ProviderError(
+                    self.name,
+                    symbol,
+                    f"Unerwartete Optionskette ({attribute}) vom Typ {type(raw).__name__}.",
+                )
+            if raw.empty:
+                continue
+            if "strike" not in raw.columns:
+                raise ProviderError(self.name, symbol, "Spalte strike fehlt in der Optionskette.")
+            part = pd.DataFrame(index=raw.index)
+            for source, target in _OPTION_SOURCE_COLUMNS.items():
+                values = raw[source] if source in raw.columns else float("nan")
+                part[target] = pd.to_numeric(values, errors="coerce")
+            part["expiry"] = expiry_ts
+            part["type"] = option_type
+            part["underlying_price"] = underlying
+            parts.append(part)
+        if not parts:
+            return empty_option_chain()
+        frame = pd.concat(parts, ignore_index=True)
+        frame = frame[frame["strike"].notna() & (frame["strike"] > 0)]
+        frame = frame.loc[:, list(OPTION_CHAIN_COLUMNS)].reset_index(drop=True)
+        for column in ("volume", "open_interest"):
+            frame[column] = frame[column].round().astype("Int64")
+        frame["expiry"] = frame["expiry"].astype("datetime64[ns]")
+        frame["type"] = frame["type"].astype("object")
+        return frame
+
     def _normalize_statement(
         self,
         symbol: str,
@@ -474,6 +591,17 @@ class YFinanceProvider:
         result = pd.concat(frames, ignore_index=True)
         result = result.sort_values(["date", "type"], kind="mergesort")
         return result.loc[:, list(ACTION_COLUMNS)].reset_index(drop=True)
+
+
+def _underlying_price(underlying: object) -> float:
+    """Kurs des Basiswerts aus ``option_chain(...).underlying`` oder NaN."""
+    if not isinstance(underlying, Mapping):
+        return float("nan")
+    for key in ("regularMarketPrice", "postMarketPrice", "previousClose"):
+        value = underlying.get(key)
+        if isinstance(value, int | float) and not isinstance(value, bool) and value > 0:
+            return float(value)
+    return float("nan")
 
 
 def _text(value: object) -> str | None:
