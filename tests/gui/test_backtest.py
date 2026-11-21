@@ -588,3 +588,12 @@ def test_threaded_run_in_main_window(
     assert len(progress) > 2
     qtbot.waitUntil(lambda: len(win.backtest.runs) == 1, timeout=10_000)
     assert not dialogs
+
+
+def test_tab_does_not_widen_main_window(
+    qtbot: QtBot, tmp_path: Path, bt_service: BacktestService
+) -> None:
+    service = AppService(Settings(data_dir=tmp_path / "app"), tmp_path / "state.json")
+    win = MainWindow(service, backtest_service=bt_service)
+    qtbot.addWidget(win)
+    assert win.backtest.minimumSizeHint().width() < win.chart.minimumSizeHint().width()

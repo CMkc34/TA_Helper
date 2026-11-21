@@ -250,9 +250,15 @@ class BacktestWidget(QWidget):
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 3)
 
+        # Rollbereich: Der Tab soll die Mindestbreite des Hauptfensters nicht vergrößern;
+        # bei schmalem Fenster erscheint stattdessen eine Bildlaufleiste.
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setWidget(self.splitter)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
-        layout.addWidget(self.splitter)
+        layout.addWidget(self.scroll_area)
 
         self._fill_strategies()
         self._apply_palette()
