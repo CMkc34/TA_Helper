@@ -135,6 +135,7 @@ Gespeichert werden nur Tageskurse; 3D, 1W und 1M werden beim Laden berechnet und
 | `backtest_trades` | `run_id, trade_id` | symbol, side, entry\_date, entry\_price, exit\_date, exit\_price, qty, pnl, pnl\_pct, fees, exit\_reason | Trade-Liste |
 | `backtest_equity` | `run_id, date` | equity, cash, exposure, drawdown | Equity-Kurve |
 | `signals` | `scan_id, symbol, date` | strategy\_id, signal (BUY, SELL, EXIT), strength, note | Ergebnisse des Scanners |
+| `scans` | `scan_id` | created\_at, strategy\_id, params\_json, universe, timeframe, as\_of, filters\_json, signal\_count | Kopfdaten jedes Scans für den Verlauf im Scanner-Tab (G-09) |
 | `option_snapshots` | `symbol, snapshot_date, expiry, strike, type` | bid, ask, last, volume, open\_interest, iv, underlying\_price, source | Tägliche Schnappschüsse der Optionsketten (O-01), type = CALL oder PUT |
 
 **Bereinigte Kurse**: `adj_factor` = adj\_close / close. Indikatoren und Backtests rechnen mit bereinigten OHLC-Werten (open, high, low, close jeweils × adj\_factor). Der Chart zeigt wahlweise roh oder bereinigt, Standard ist bereinigt.
