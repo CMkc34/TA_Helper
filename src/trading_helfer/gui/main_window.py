@@ -19,14 +19,18 @@ from PySide6.QtWidgets import (
 )
 
 from trading_helfer import __version__
+from trading_helfer.core.markers import Marker
+from trading_helfer.core.types import Timeframe
 from trading_helfer.gui import texts
 from trading_helfer.gui.theme import apply_theme
+from trading_helfer.gui.widgets.backtest import BacktestWidget
 from trading_helfer.gui.widgets.chart import ChartWidget
 from trading_helfer.gui.widgets.data import DataWidget
 from trading_helfer.gui.widgets.fundamentals import FundamentalsWidget
 from trading_helfer.gui.widgets.watchlist import WatchlistWidget
 from trading_helfer.gui.worker import Worker, WorkerError
 from trading_helfer.services.app_service import AppService, ThemeName
+from trading_helfer.services.backtest_service import BacktestService
 from trading_helfer.services.chart_service import ChartService
 from trading_helfer.services.data_service import DataService
 from trading_helfer.services.fundamentals_service import FundamentalsService
@@ -71,6 +75,9 @@ class MainWindow(QMainWindow):
         data_service: Datenupdate, Qualitätsbericht und Quellen für den Daten-Tab;
             Standard ist ein :class:`DataService` mit den Einstellungen von ``service``,
             der Änderungen nur im Speicher hält.
+        backtest_service: Strategien, Läufe und gespeicherte Ergebnisse für den
+            Backtest-Tab; Standard ist ein :class:`BacktestService` mit den Einstellungen
+            von ``service``.
     """
 
     def __init__(
@@ -81,6 +88,7 @@ class MainWindow(QMainWindow):
         chart_service: ChartService | None = None,
         fundamentals_service: FundamentalsService | None = None,
         data_service: DataService | None = None,
+        backtest_service: BacktestService | None = None,
     ) -> None:
         super().__init__(parent)
         self.service = service
@@ -110,6 +118,13 @@ class MainWindow(QMainWindow):
         self.fundamentals = FundamentalsWidget(self.fundamentals_service, runner=self.run_task)
         self.set_view("fundamentals", self.fundamentals)
 
+        self.backtest_service = (
+            backtest_service if backtest_service is not None else BacktestService(service.settings)
+        )
+        self.backtest = BacktestWidget(self.backtest_service, runner=self.run_task)
+        self.backtest.trade_activated.connect(self.show_trade_chart)
+        self.set_view("backtest", self.backtest)
+
         self.data_service = (
             data_service if data_service is not None else DataService(service.settings)
         )
@@ -130,6 +145,7 @@ class MainWindow(QMainWindow):
 
         self._build_menus()
         self.statusBar().showMessage(texts.STATUS_READY)
+        self.tabs.setCurrentIndex(0)
         self.restore_layout()
 
     # -- Aufbau ----------------------------------------------------------------------
@@ -288,6 +304,15 @@ class MainWindow(QMainWindow):
         """Zeigt den Über-Dialog."""
         QMessageBox.about(self, texts.ABOUT_TITLE, texts.ABOUT_TEXT.format(version=__version__))
 
+    def show_trade_chart(self, symbol: str, timeframe: Timeframe, markers: list[Marker]) -> None:
+        """Zeigt ``symbol`` im Chart-Tab im Zeitrahmen des Laufs mit Trade-Markern."""
+        self.chart.clear_markers()
+        self.chart.add_markers(markers)
+        self.chart.set_timeframe(timeframe)
+        self.tabs.setCurrentWidget(self.chart)
+        if self.chart.symbol != symbol:
+            self.chart.load_symbol(symbol)
+
     def _on_data_changed(self, _result: object) -> None:
         """Verwirft zwischengespeicherte Kurse und Kennzahlen nach Update oder Import."""
         self.chart_service.invalidate()
@@ -295,8 +320,11 @@ class MainWindow(QMainWindow):
 
     def _on_symbol_selected(self, symbol: str) -> None:
         self.statusBar().showMessage(texts.STATUS_SYMBOL.format(symbol=symbol))
-        # Im Kennzahlen-Tab bleiben; sonst den Chart zeigen.
-        if self.tabs.currentWidget() is not self.fundamentals:
+        # Im Kennzahlen- und Backtest-Tab bleiben; sonst den Chart zeigen.
+        current = self.tabs.currentWidget()
+        if current is self.backtest:
+            self.backtest.set_symbol(symbol)
+        elif current is not self.fundamentals:
             self.tabs.setCurrentWidget(self.chart)
         self.chart.load_symbol(symbol)
         self.fundamentals.load_symbol(symbol)

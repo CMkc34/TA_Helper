@@ -185,3 +185,95 @@ DATA_IMPORT_HINT: Final = "Tageskurse z. B. aus Kaggle; der Dateiname ist das Sy
 DATA_IMPORT_RUNNING: Final = "Importiere {name} …"
 DATA_IMPORT_ERRORS: Final = " Abgelehnte Zeilen: {name}.fehler.csv"
 DATA_IMPORT_FAILED: Final = "Import fehlgeschlagen: {message}"
+
+# Backtest
+BACKTEST_FORM_GROUP: Final = "Einstellungen"
+BACKTEST_STRATEGY: Final = "Strategie:"
+BACKTEST_PARAMS_GROUP: Final = "Parameter"
+BACKTEST_NO_PARAMS: Final = "Diese Strategie hat keine Parameter."
+BACKTEST_UNIVERSE: Final = "Universum:"
+BACKTEST_UNIVERSE_SYMBOL: Final = "Einzelwert"
+BACKTEST_UNIVERSE_INDEX: Final = "Index"
+BACKTEST_SYMBOL_PLACEHOLDER: Final = "Symbol, z. B. AAPL"
+BACKTEST_TIMEFRAME: Final = "Zeitrahmen:"
+BACKTEST_START: Final = "Von:"
+BACKTEST_END: Final = "Bis:"
+BACKTEST_CAPITAL: Final = "Startkapital:"
+BACKTEST_FEE: Final = "Gebühr je Order:"
+BACKTEST_FEE_PCT: Final = "Gebühr in %:"
+BACKTEST_SLIPPAGE: Final = "Slippage in %:"
+BACKTEST_BENCHMARK: Final = "Benchmark:"
+BACKTEST_SAVE: Final = "Lauf speichern"
+BACKTEST_RUN: Final = "Backtest starten"
+BACKTEST_TASK: Final = "Backtest {strategy} · {universe}"
+BACKTEST_IDLE: Final = "Strategie und Universum wählen, dann „Backtest starten“."
+BACKTEST_NO_STRATEGY: Final = "Keine Strategie geladen."
+BACKTEST_RUNNING: Final = "Backtest läuft …"
+BACKTEST_PROGRESS: Final = "{percent} % · {message}"
+BACKTEST_FAILED: Final = "Backtest fehlgeschlagen: {message}"
+BACKTEST_DONE: Final = "{strategy} · {universe} · {timeframe} · {start} bis {end}"
+BACKTEST_SAVED_AS: Final = " · gespeichert"
+BACKTEST_UNIVERSE_HINT: Final = (
+    "Ein Index wird vorerst als Einzelwerte mit gleichem Kapitalanteil gerechnet."
+)
+BACKTEST_RESULT_OVERVIEW: Final = "Übersicht"
+BACKTEST_RESULT_TRADES: Final = "Trades"
+BACKTEST_RESULT_MONTHLY: Final = "Monatsrenditen"
+BACKTEST_RESULT_COMPARE: Final = "Vergleich"
+BACKTEST_RESULT_LOG: Final = "Protokoll"
+BACKTEST_EQUITY_TITLE: Final = "Equity"
+BACKTEST_DRAWDOWN_TITLE: Final = "Drawdown (%)"
+BACKTEST_STRATEGY_CURVE: Final = "Strategie"
+BACKTEST_TRADES_HINT: Final = "Doppelklick auf einen Trade öffnet den Chart mit Markern."
+BACKTEST_EXPORT: Final = "Trades als CSV …"
+BACKTEST_EXPORT_DIALOG: Final = "Trades exportieren"
+BACKTEST_EXPORT_FILTER: Final = "CSV-Dateien (*.csv)"
+BACKTEST_EXPORT_DONE: Final = "{count} Trades nach {path} exportiert."
+BACKTEST_EXPORT_FAILED: Final = "Export fehlgeschlagen: {message}"
+BACKTEST_COL_SYMBOL: Final = "Symbol"
+BACKTEST_COL_SIDE: Final = "Richtung"
+BACKTEST_COL_ENTRY_DATE: Final = "Einstieg"
+BACKTEST_COL_ENTRY_PRICE: Final = "Kurs Ein"
+BACKTEST_COL_EXIT_DATE: Final = "Ausstieg"
+BACKTEST_COL_EXIT_PRICE: Final = "Kurs Aus"
+BACKTEST_COL_QTY: Final = "Stück"
+BACKTEST_COL_PNL: Final = "Gewinn"
+BACKTEST_COL_PNL_PCT: Final = "Gewinn %"
+BACKTEST_COL_FEES: Final = "Gebühren"
+BACKTEST_COL_REASON: Final = "Grund"
+BACKTEST_SIDE_LONG: Final = "Long"
+BACKTEST_SIDE_SHORT: Final = "Short"
+BACKTEST_MONTHS: Final = (
+    "Jan",
+    "Feb",
+    "Mär",
+    "Apr",
+    "Mai",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Okt",
+    "Nov",
+    "Dez",
+)
+BACKTEST_YEAR: Final = "Jahr"
+BACKTEST_NO_MONTHLY: Final = "Keine Monatsrenditen."
+BACKTEST_RUNS_GROUP: Final = "Gespeicherte Läufe"
+BACKTEST_RUNS_REFRESH: Final = "Aktualisieren"
+BACKTEST_RUNS_LOAD: Final = "Laden"
+BACKTEST_RUNS_COMPARE: Final = "Vergleichen"
+BACKTEST_RUNS_DELETE: Final = "Löschen"
+BACKTEST_RUNS_TASK: Final = "Gespeicherte Läufe lesen"
+BACKTEST_LOAD_TASK: Final = "Lauf laden"
+BACKTEST_COMPARE_TASK: Final = "Läufe vergleichen"
+BACKTEST_COL_CREATED: Final = "Gespeichert"
+BACKTEST_COL_STRATEGY: Final = "Strategie"
+BACKTEST_COL_UNIVERSE: Final = "Universum"
+BACKTEST_COL_TIMEFRAME: Final = "ZR"
+BACKTEST_COL_RETURN: Final = "Rendite"
+BACKTEST_COMPARE_SELECT: Final = "Bitte genau zwei Läufe markieren."
+BACKTEST_COMPARE_METRIC: Final = "Kennzahl"
+BACKTEST_COMPARE_DIFF: Final = "Differenz B − A"
+BACKTEST_COMPARE_EMPTY: Final = "Zwei gespeicherte Läufe markieren und „Vergleichen“ klicken."
+BACKTEST_COMPARE_HEADER: Final = "A: {a}\nB: {b}"
