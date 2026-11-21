@@ -20,12 +20,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Startet die App bzw. führt einen Unterbefehl aus und gibt den Exit-Code zurück."""
+    """Startet ohne Unterbefehl die GUI und gibt den Exit-Code zurück."""
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command is None:
-        print(f"trading-helfer {__version__}")
-    return 0
+        # Erst hier importieren, damit Unterbefehle ohne Qt auskommen.
+        from trading_helfer.gui.application import run_gui
+
+        return run_gui()
+    return 0  # pragma: no cover - Unterbefehle folgen in späteren Issues
 
 
 if __name__ == "__main__":  # pragma: no cover
