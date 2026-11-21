@@ -306,7 +306,7 @@ def _collect_bars(
     log: list[str],
 ) -> dict[str, pd.DataFrame]:
     if bars is not None:
-        found = {s: bars[s] for s in symbols if s in bars}
+        found = {s: _until(bars[s], end) for s in symbols if s in bars}
     else:
         found = _load_daily(settings, symbols, end)
     missing = [s for s in symbols if s not in found]
@@ -317,6 +317,14 @@ def _collect_bars(
             + (" …" if len(missing) > 20 else "")
         )
     return found
+
+
+def _until(daily: pd.DataFrame, end: Date) -> pd.DataFrame:
+    """Tageskurse bis einschließlich ``end`` (wie beim Laden aus der Datenbank)."""
+    if DATE_COLUMN not in daily.columns or daily.empty:
+        return daily
+    dates = pd.to_datetime(daily[DATE_COLUMN])
+    return daily.loc[(dates <= pd.Timestamp(end)).to_numpy()]
 
 
 def _load_daily(settings: Settings, symbols: Sequence[str], end: Date) -> dict[str, pd.DataFrame]:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import math
 from pathlib import Path
@@ -527,3 +528,14 @@ def test_calmar_equals_mar_for_short_curves(settings: Settings) -> None:
         bars=_bars(_tent(length=300)), costs=NO_COSTS,
     )  # fmt: skip
     assert objective_value(result, "calmar") == objective_value(result, "mar")
+
+
+def test_calmar_is_undefined_when_account_is_empty_at_window_start(settings: Settings) -> None:
+    result = run_backtest(
+        AlwaysLong(), None, "X", Timeframe.D1, "2010-01-01", "2030-12-31", settings,
+        bars=_bars(np.linspace(100.0, 50.0, 6 * 252), start="2010-01-04"), costs=NO_COSTS,
+    )  # fmt: skip
+    equity = result.equity.copy()
+    equity.loc[: len(equity) // 2, "equity"] = -1.0  # Konto vor drei Jahren aufgebraucht
+    broken = dataclasses.replace(result, equity=equity)
+    assert objective_value(broken, "calmar") is None
