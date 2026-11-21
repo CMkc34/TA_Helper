@@ -6,7 +6,6 @@ from collections.abc import Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import duckdb
 import pytest
 
 from trading_helfer.data.providers.usage import (
@@ -16,24 +15,12 @@ from trading_helfer.data.providers.usage import (
     RequestCounter,
     next_free_slot,
 )
+from trading_helfer.data.schema import discover_migrations
+from trading_helfer.data.storage import MarketStore
 
-MIGRATION = (
-    Path(__file__).resolve().parents[3]
-    / "src"
-    / "trading_helfer"
-    / "data"
-    / "migrations"
-    / "002_provider_requests.sql"
-)
 NOW = datetime(2024, 1, 15, 12, 0, 0)
 HOURLY = QuotaWindow(limit=2, period=timedelta(hours=1), label="pro Stunde")
 DAILY = QuotaWindow(limit=3, period=timedelta(days=1), label="pro Tag")
-
-
-def open_db(path: Path | str = ":memory:") -> duckdb.DuckDBPyConnection:
-    con = duckdb.connect(str(path))
-    con.execute(MIGRATION.read_text(encoding="utf-8"))
-    return con
 
 
 @pytest.fixture(params=["memory", "duckdb"])
@@ -41,9 +28,8 @@ def counter(request: pytest.FixtureRequest) -> Iterator[RequestCounter]:
     if request.param == "memory":
         yield MemoryRequestCounter()
     else:
-        con = open_db()
-        yield DuckDBRequestCounter(con)
-        con.close()
+        with MarketStore(":memory:") as store:
+            yield DuckDBRequestCounter(store.connection)
 
 
 def test_counters_satisfy_protocol(counter: RequestCounter) -> None:
@@ -97,21 +83,16 @@ def test_next_free_slot_picks_longest_block(counter: RequestCounter) -> None:
 
 def test_duckdb_counter_survives_restart(tmp_path: Path) -> None:
     db = tmp_path / "market.duckdb"
-    con = open_db(db)
-    DuckDBRequestCounter(con).record("tiingo", NOW)
-    con.close()
+    with MarketStore(db) as store:
+        assert 2 in store.applied_migrations
+        DuckDBRequestCounter(store.connection).record("tiingo", NOW)
 
-    con = duckdb.connect(str(db))
-    try:
-        assert DuckDBRequestCounter(con).timestamps_since("tiingo", NOW - timedelta(hours=1)) == [
-            NOW
-        ]
-    finally:
-        con.close()
+    with MarketStore(db) as store:
+        assert store.applied_migrations == []
+        counter = DuckDBRequestCounter(store.connection)
+        assert counter.timestamps_since("tiingo", NOW - timedelta(hours=1)) == [NOW]
 
 
-def test_migration_is_idempotent() -> None:
-    con = open_db()
-    con.execute(MIGRATION.read_text(encoding="utf-8"))
-    assert con.execute("SELECT count(*) FROM provider_requests").fetchone() == (0,)
-    con.close()
+def test_migration_follows_numbering() -> None:
+    names = [(m.version, m.name) for m in discover_migrations()]
+    assert (2, "provider_requests") in names

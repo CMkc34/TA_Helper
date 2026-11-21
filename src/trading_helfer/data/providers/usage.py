@@ -86,7 +86,7 @@ class DuckDBRequestCounter:
     """
 
     def __init__(self, connection: duckdb.DuckDBPyConnection) -> None:
-        """Nutzt eine offene DuckDB-Verbindung.
+        """Nutzt eine offene DuckDB-Verbindung, in der App ``MarketStore.connection``.
 
         Args:
             connection: Verbindung zu einer Datenbank mit Tabelle ``provider_requests``.
