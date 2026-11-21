@@ -31,6 +31,7 @@ from yfinance.exceptions import (
 )
 
 from trading_helfer.core.bars import BAR_COLUMNS, PRICE_COLUMNS, empty_bars, validate_bars
+from trading_helfer.data.fundamentals import empty_fundamentals, normalize_fundamentals
 from trading_helfer.data.providers.base import (
     ACTION_COLUMNS,
     ActionType,
@@ -69,6 +70,55 @@ _ACTION_SOURCE_COLUMNS: Final[Mapping[str, ActionType]] = {
     "Dividends": ActionType.DIVIDEND,
 }
 
+_STATEMENT_METRICS: Final[Mapping[str, Mapping[str, tuple[str, ...]]]] = {
+    "income": {
+        "revenue": ("TotalRevenue", "OperatingRevenue"),
+        "cost_of_revenue": ("CostOfRevenue", "ReconciledCostOfRevenue"),
+        "gross_profit": ("GrossProfit",),
+        "operating_income": ("OperatingIncome", "TotalOperatingIncomeAsReported"),
+        "net_income": ("NetIncome", "NetIncomeCommonStockholders"),
+        "ebitda": ("EBITDA", "NormalizedEBITDA"),
+        "eps_diluted": ("DilutedEPS",),
+        "interest_expense": ("InterestExpense", "InterestExpenseNonOperating"),
+    },
+    "balance": {
+        "total_assets": ("TotalAssets",),
+        "total_liabilities": ("TotalLiabilitiesNetMinorityInterest",),
+        "total_equity": (
+            "StockholdersEquity",
+            "CommonStockEquity",
+            "TotalEquityGrossMinorityInterest",
+        ),
+        "total_debt": ("TotalDebt",),
+        "long_term_debt": ("LongTermDebt", "LongTermDebtAndCapitalLeaseObligation"),
+        "cash": ("CashAndCashEquivalents", "CashCashEquivalentsAndShortTermInvestments"),
+        "current_assets": ("CurrentAssets",),
+        "current_liabilities": ("CurrentLiabilities",),
+        "inventory": ("Inventory",),
+        "retained_earnings": ("RetainedEarnings",),
+        "shares_outstanding": ("OrdinarySharesNumber", "ShareIssued"),
+    },
+    "cashflow": {
+        "operating_cashflow": (
+            "OperatingCashFlow",
+            "CashFlowFromContinuingOperatingActivities",
+        ),
+        "capex": ("CapitalExpenditure",),
+        "dividends_paid": ("CashDividendsPaid", "CommonStockDividendPaid"),
+    },
+}
+"""Je Abschluss: fester Metrikname → Yahoo-Zeilen in Vorrangreihenfolge.
+
+Fehlt die erste Zeile (oder ihr Wert in einer Periode), gilt die nächste.
+"""
+
+_STATEMENT_METHODS: Final[Mapping[str, str]] = {
+    "income": "get_income_stmt",
+    "balance": "get_balance_sheet",
+    "cashflow": "get_cash_flow",
+}
+_FREQUENCIES: Final[Mapping[str, str]] = {"quarterly": "Q", "yearly": "FY"}
+
 _log = logging.getLogger(__name__)
 
 
@@ -87,6 +137,18 @@ class TickerLike(Protocol):
     @property
     def info(self) -> Mapping[str, Any]:
         """Stammdaten wie ``yfinance.Ticker.info``."""
+        ...
+
+    def get_income_stmt(self, *args: Any, **kwargs: Any) -> pd.DataFrame:
+        """Gewinn- und Verlustrechnung wie ``yfinance.Ticker.get_income_stmt``."""
+        ...
+
+    def get_balance_sheet(self, *args: Any, **kwargs: Any) -> pd.DataFrame:
+        """Bilanz wie ``yfinance.Ticker.get_balance_sheet``."""
+        ...
+
+    def get_cash_flow(self, *args: Any, **kwargs: Any) -> pd.DataFrame:
+        """Kapitalflussrechnung wie ``yfinance.Ticker.get_cash_flow``."""
         ...
 
 
@@ -119,9 +181,9 @@ def _default_ticker_factory(symbol: str) -> TickerLike:
 class YFinanceProvider:
     """Kurse, Corporate Actions und Stammdaten von Yahoo Finance.
 
-    Erfüllt :class:`~trading_helfer.data.providers.base.PriceProvider` und
-    :class:`~trading_helfer.data.providers.base.InstrumentProvider`.
-    Fundamentaldaten folgen in einem eigenen Issue (D-09).
+    Erfüllt :class:`~trading_helfer.data.providers.base.PriceProvider`,
+    :class:`~trading_helfer.data.providers.base.InstrumentProvider` und
+    :class:`~trading_helfer.data.providers.base.FundamentalsProvider`.
     """
 
     name: str = PROVIDER_NAME
@@ -243,6 +305,97 @@ class YFinanceProvider:
             currency=_text(raw.get("currency")),
             source=self.name,
         )
+
+    def fetch_fundamentals(self, symbol: str) -> pd.DataFrame:
+        """Quartals- und Jahreszahlen aus GuV, Bilanz und Kapitalflussrechnung.
+
+        Die Yahoo-Zeilen werden auf die festen Namen aus
+        :data:`~trading_helfer.data.fundamentals.METRICS` abgebildet. Was Yahoo nicht
+        meldet, fehlt im Ergebnis (nie ``0``). Yahoo liefert kein
+        Veröffentlichungsdatum, daher ist ``reported_date`` immer das konservative
+        Datum (Periodenende + 45 bzw. 75 Tage).
+
+        Args:
+            symbol: Symbol in App-Schreibweise.
+
+        Returns:
+            Spalten ``period_end, period_type, metric, value, reported_date``; leer,
+            wenn Yahoo das Symbol nicht kennt.
+
+        Raises:
+            ValueError: Das Symbol ist leer.
+            ProviderError: Yahoo war nach allen Versuchen nicht erreichbar oder
+                antwortete fehlerhaft.
+        """
+        yahoo_symbol = to_yahoo_symbol(symbol)
+        frames: list[pd.DataFrame] = []
+        for statement, method in _STATEMENT_METHODS.items():
+            for freq, period_type in _FREQUENCIES.items():
+
+                def request(method: str = method, freq: str = freq) -> pd.DataFrame:
+                    ticker = self._ticker_factory(yahoo_symbol)
+                    result: pd.DataFrame = getattr(ticker, method)(freq=freq, pretty=False)
+                    return result
+
+                raw = self._call(symbol, request)
+                if raw is None:
+                    return empty_fundamentals()
+                frames.append(
+                    self._normalize_statement(
+                        symbol, raw, _STATEMENT_METRICS[statement], period_type
+                    )
+                )
+        combined = pd.concat([f for f in frames if not f.empty] or [empty_fundamentals()])
+        return normalize_fundamentals(combined)
+
+    def _normalize_statement(
+        self,
+        symbol: str,
+        raw: pd.DataFrame,
+        mapping: Mapping[str, tuple[str, ...]],
+        period_type: str,
+    ) -> pd.DataFrame:
+        """Ein Abschluss (Zeilen = Yahoo-Posten, Spalten = Periodenende) ins Langformat."""
+        if not isinstance(raw, pd.DataFrame):
+            raise ProviderError(
+                self.name, symbol, f"Unerwartete Antwort vom Typ {type(raw).__name__}."
+            )
+        if raw.empty:
+            return empty_fundamentals()
+        try:
+            period_ends = pd.DatetimeIndex(pd.to_datetime(raw.columns))
+        except (ValueError, TypeError) as exc:
+            raise ProviderError(
+                self.name, symbol, f"Unerwartete Perioden im Abschluss: {exc}"
+            ) from exc
+        table = raw.copy()
+        table.columns = period_ends
+        table = table.apply(pd.to_numeric, errors="coerce")
+        rows: list[pd.DataFrame] = []
+        for metric, candidates in mapping.items():
+            values = pd.Series(float("nan"), index=period_ends, dtype="float64")
+            for candidate in candidates:
+                if candidate in table.index:
+                    row = table.loc[candidate]
+                    if isinstance(row, pd.DataFrame):  # doppelte Zeile: erste zählt
+                        row = row.iloc[0]
+                    values = values.combine_first(row.astype("float64"))
+            values = values.dropna()
+            if values.empty:
+                continue
+            rows.append(
+                pd.DataFrame(
+                    {
+                        "period_end": values.index,
+                        "period_type": period_type,
+                        "metric": metric,
+                        "value": values.to_numpy(),
+                    }
+                )
+            )
+        if not rows:
+            return empty_fundamentals()
+        return pd.concat(rows, ignore_index=True)
 
     def _call[T](self, symbol: str, request: Callable[[], T]) -> T | None:
         """Führt eine Anfrage mit Rate-Limit und Wiederholungen aus.
