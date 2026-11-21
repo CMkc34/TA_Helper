@@ -1,4 +1,4 @@
--- 003_backtest_provenance: Herkunft und Details gespeicherter Backtest-Läufe (Issue B-06).
+-- 004_backtest_provenance: Herkunft und Details gespeicherter Backtest-Läufe (Issue B-06).
 -- strategy_source_hash: SHA-256 des Strategie-Quellcodes zum Zeitpunkt des Laufs.
 -- data_last_date / data_symbol_count: Datenstand der Kursdatenbank (letztes Datum, Anzahl Symbole).
 -- details_json: übrige Ergebnisteile (Orders, Protokoll, offene Positionen, Spaltentypen).
