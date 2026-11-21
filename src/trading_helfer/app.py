@@ -9,6 +9,9 @@ from pathlib import Path
 
 from trading_helfer import __version__
 
+INDEX_CHOICES = ("SP500", "NDX100")
+"""Indizes, die ``trading-helfer update --index`` kennt."""
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Erzeugt den Argument-Parser mit allen Unterbefehlen."""
@@ -33,6 +36,27 @@ def build_parser() -> argparse.ArgumentParser:
     quality.add_argument(
         "--csv", type=Path, default=None, help="Bericht zusätzlich als CSV-Datei speichern"
     )
+    update = commands.add_parser(
+        "update",
+        help="Kurse inkrementell aktualisieren",
+        description="Lädt neue Tageskurse für Indexmitglieder, eigene Symbole und die "
+        "Benchmarks SPY und QQQ. Ohne --index und --symbols werden alle Indizes geladen.",
+    )
+    update.add_argument(
+        "--index",
+        nargs="+",
+        metavar="INDEX",
+        type=str.upper,
+        choices=sorted(INDEX_CHOICES),
+        default=None,
+        help="Indizes (SP500, NDX100)",
+    )
+    update.add_argument(
+        "--symbols", nargs="+", metavar="SYMBOL", default=None, help="zusätzliche Symbole"
+    )
+    update.add_argument(
+        "--db", type=Path, default=None, help="DuckDB-Datei (Standard: aus den Einstellungen)"
+    )
     return parser
 
 
@@ -47,6 +71,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_gui()
     if args.command == "quality":
         return run_quality(args.symbols, db_path=args.db, csv_path=args.csv)
+    if args.command == "update":
+        return run_update(args.index, args.symbols, db_path=args.db)
     return 0  # pragma: no cover - weitere Unterbefehle folgen in späteren Issues
 
 
@@ -84,6 +110,61 @@ def run_quality(
     print(report.to_string(index=False, max_colwidth=120))
     print(f"\n{len(report)} Befunde: {errors} Fehler, {warnings} Warnungen.")
     return 1 if errors else 0
+
+
+def run_update(
+    index_codes: Sequence[str] | None = None,
+    symbols: Sequence[str] | None = None,
+    *,
+    db_path: Path | None = None,
+) -> int:
+    """Führt das Datenupdate aus und meldet den Fortschritt auf der Konsole.
+
+    Args:
+        index_codes: Indizes; ``None`` = alle, wenn auch ``symbols`` fehlt, sonst keine.
+        symbols: Zusätzliche Symbole.
+        db_path: DuckDB-Datei; ``None`` = Pfad aus den Einstellungen.
+
+    Returns:
+        Exit-Code: 0 ohne Fehler, 1 wenn Symbole fehlschlugen, 2 bei falschen
+        Einstellungen, 130 nach Abbruch mit Strg+C.
+    """
+    from trading_helfer.core.config import ConfigError, load_settings
+    from trading_helfer.data.storage import MarketStore
+    from trading_helfer.data.update import UpdateError, build_price_providers, update_universe
+
+    if index_codes is None:
+        index_codes = [] if symbols else list(INDEX_CHOICES)
+    try:
+        settings = load_settings()
+    except ConfigError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    path = db_path if db_path is not None else settings.database_path
+
+    def progress(done: int, total: int, symbol: str) -> None:
+        print(f"[{done}/{total}] {symbol}", flush=True)
+
+    with MarketStore(path) as store:
+        try:
+            result = update_universe(
+                index_codes,
+                progress,
+                store=store,
+                providers=build_price_providers(settings, store),
+                symbols=symbols or (),
+                start=settings.start_date,
+            )
+        except UpdateError as exc:
+            print(exc, file=sys.stderr)
+            return 2
+        except KeyboardInterrupt:
+            print("\nAbgebrochen. Bereits geladene Symbole sind gespeichert.", file=sys.stderr)
+            return 130
+    for symbol, reason in sorted(result.failed.items()):
+        print(f"Fehler {symbol}: {reason}", file=sys.stderr)
+    print(result.summary())
+    return 1 if result.failed else 0
 
 
 if __name__ == "__main__":  # pragma: no cover
