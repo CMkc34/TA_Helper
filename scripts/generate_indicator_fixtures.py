@@ -7,6 +7,8 @@ TA-Lib ist keine Abhängigkeit des Projekts, nur dieses Skripts::
 
 Ichimoku und Supertrend gibt es in TA-Lib nicht; ihre Referenz ist eine einfache,
 unabhängige Schleifen-Implementierung (Supertrend auf Basis von ``talib.ATR``).
+Ebenso Keltner (``talib.EMA`` ± ``talib.ATR``), Donchian (``talib.MAX``/``MIN``) und
+historische Volatilität (Stichproben-Standardabweichung der Log-Renditen).
 """
 
 from __future__ import annotations
@@ -144,6 +146,57 @@ def main() -> None:
     bars.to_csv(OUT / "bars.csv", index=False, date_format="%Y-%m-%d")
     ref.insert(0, "date", bars["date"].dt.strftime("%Y-%m-%d"))
     ref.to_csv(OUT / "trend_reference.csv", index=False, float_format="%.10f")
+
+    mv = momentum_volatility_ref(bars)
+    mv.insert(0, "date", bars["date"].dt.strftime("%Y-%m-%d"))
+    mv.to_csv(OUT / "momentum_volatility_reference.csv", index=False, float_format="%.10f")
+
+
+def historical_volatility_ref(close: np.ndarray, period: int = 20) -> np.ndarray:
+    out = np.full(N, math.nan)
+    log_ret = [math.log(close[i] / close[i - 1]) for i in range(1, N)]
+    for i in range(period, N):
+        window = log_ret[i - period : i]
+        mean = sum(window) / period
+        var = sum((r - mean) ** 2 for r in window) / (period - 1)
+        out[i] = math.sqrt(var) * math.sqrt(252)
+    return out
+
+
+def momentum_volatility_ref(bars: pd.DataFrame) -> pd.DataFrame:
+    high, low, close = (bars[c].to_numpy(dtype=float) for c in ("high", "low", "close"))
+    # TA-Lib gibt %K erst ab dem Start von %D aus; %K selbst ist zwei Kerzen früher
+    # definiert, deshalb hier aus STOCHF (%K roh) mit SMA(3) nachgebildet.
+    slow_k, slow_d = talib.STOCH(high, low, close, 14, 3, 0, 3, 0)
+    fast_k, _ = talib.STOCHF(high, low, close, 14, 1, 0)
+    k_line = np.full(N, math.nan)
+    k_line[13:] = talib.SMA(fast_k[13:], 3)
+    assert np.allclose(k_line[17:], slow_k[17:], atol=1e-12)
+    upper, middle, lower = talib.BBANDS(close, 20, 2.0, 2.0, 0)
+    ema20 = talib.EMA(close, 20)
+    atr10 = talib.ATR(high, low, close, 10)
+    dc_upper, dc_lower = talib.MAX(high, 20), talib.MIN(low, 20)
+    return pd.DataFrame(
+        {
+            "rsi_rsi": talib.RSI(close, 14),
+            "stoch_k": k_line,
+            "stoch_d": slow_d,
+            "roc_roc": talib.ROC(close, 10),
+            "willr_willr": talib.WILLR(high, low, close, 14),
+            "cci_cci": talib.CCI(high, low, close, 20),
+            "atr_atr": talib.ATR(high, low, close, 14),
+            "bbands_upper": upper,
+            "bbands_middle": middle,
+            "bbands_lower": lower,
+            "keltner_upper": ema20 + 2.0 * atr10,
+            "keltner_middle": ema20,
+            "keltner_lower": ema20 - 2.0 * atr10,
+            "donchian_upper": dc_upper,
+            "donchian_middle": (dc_upper + dc_lower) / 2,
+            "donchian_lower": dc_lower,
+            "hv_hv": historical_volatility_ref(close),
+        }
+    )
 
 
 if __name__ == "__main__":
