@@ -17,6 +17,7 @@ from trading_helfer.gui import texts
 from trading_helfer.gui.main_window import MainWindow
 from trading_helfer.services.app_service import AppService
 from trading_helfer.services.chart_service import ChartService, store_loader
+from trading_helfer.services.fundamentals_service import FundamentalsService
 
 __all__ = ["get_application", "install_exception_hook", "run_gui"]
 
@@ -85,7 +86,10 @@ def run_gui(
     logger.info("Trading Helfer startet")
     service = AppService(settings, state_path)
     chart_service = ChartService(store_loader(settings.database_path))
-    window = MainWindow(service, chart_service=chart_service)
+    fundamentals_service = FundamentalsService(settings.database_path)
+    window = MainWindow(
+        service, chart_service=chart_service, fundamentals_service=fundamentals_service
+    )
     previous_hook = install_exception_hook(window)
     try:
         window.show()

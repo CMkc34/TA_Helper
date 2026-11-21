@@ -9,6 +9,8 @@ Ichimoku und Supertrend gibt es in TA-Lib nicht; ihre Referenz ist eine einfache
 unabhängige Schleifen-Implementierung (Supertrend auf Basis von ``talib.ATR``).
 Ebenso Keltner (``talib.EMA`` ± ``talib.ATR``), Donchian (``talib.MAX``/``MIN``) und
 historische Volatilität (Stichproben-Standardabweichung der Log-Renditen).
+Bei den Volumen-Indikatoren stammen OBV und Volumen-SMA aus TA-Lib, gleitender VWAP und
+Chaikin Money Flow aus einfachen Schleifen.
 """
 
 from __future__ import annotations
@@ -151,6 +153,10 @@ def main() -> None:
     mv.insert(0, "date", bars["date"].dt.strftime("%Y-%m-%d"))
     mv.to_csv(OUT / "momentum_volatility_reference.csv", index=False, float_format="%.10f")
 
+    vol = volume_ref(bars)
+    vol.insert(0, "date", bars["date"].dt.strftime("%Y-%m-%d"))
+    vol.to_csv(OUT / "volume_reference.csv", index=False, float_format="%.10f")
+
 
 def historical_volatility_ref(close: np.ndarray, period: int = 20) -> np.ndarray:
     out = np.full(N, math.nan)
@@ -195,6 +201,31 @@ def momentum_volatility_ref(bars: pd.DataFrame) -> pd.DataFrame:
             "donchian_middle": (dc_upper + dc_lower) / 2,
             "donchian_lower": dc_lower,
             "hv_hv": historical_volatility_ref(close),
+        }
+    )
+
+
+def volume_ref(bars: pd.DataFrame, period: int = 20) -> pd.DataFrame:
+    high, low, close = (bars[c].to_numpy(dtype=float) for c in ("high", "low", "close"))
+    volume = bars["volume"].to_numpy(dtype=float)
+    vwap = np.full(N, math.nan)
+    cmf = np.full(N, math.nan)
+    for i in range(period - 1, N):
+        pv = mfv = vol = 0.0
+        for j in range(i - period + 1, i + 1):
+            typical = (high[j] + low[j] + close[j]) / 3
+            mult = ((close[j] - low[j]) - (high[j] - close[j])) / (high[j] - low[j])
+            pv += typical * volume[j]
+            mfv += mult * volume[j]
+            vol += volume[j]
+        vwap[i] = pv / vol
+        cmf[i] = mfv / vol
+    return pd.DataFrame(
+        {
+            "obv_obv": talib.OBV(close, volume),
+            "vwap_vwap": vwap,
+            "cmf_cmf": cmf,
+            "volume_sma_volume_sma": talib.SMA(volume, period),
         }
     )
 

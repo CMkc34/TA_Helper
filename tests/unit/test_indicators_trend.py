@@ -136,7 +136,10 @@ def test_short_input_is_all_nan(bars: pd.DataFrame, length: int) -> None:
     for spec in registry.list_all():
         result = spec.compute(df)
         assert len(result) == length
-        if spec.name != "psar" or length < 2:
+        # OBV ist kumulativ und hat keine Anlaufphase.
+        if spec.name == "obv":
+            assert result.notna().all().all()
+        elif spec.name != "psar" or length < 2:
             assert result.isna().all().all(), spec.name
 
 
