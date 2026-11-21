@@ -19,11 +19,14 @@ from PySide6.QtWidgets import (
 )
 
 from trading_helfer import __version__
+from trading_helfer.core.markers import Marker
+from trading_helfer.core.types import Timeframe
 from trading_helfer.gui import texts
 from trading_helfer.gui.theme import apply_theme
 from trading_helfer.gui.widgets.chart import ChartWidget
 from trading_helfer.gui.widgets.data import DataWidget
 from trading_helfer.gui.widgets.fundamentals import FundamentalsWidget
+from trading_helfer.gui.widgets.scanner import ScannerWidget
 from trading_helfer.gui.widgets.strategies import StrategiesWidget
 from trading_helfer.gui.widgets.watchlist import WatchlistWidget
 from trading_helfer.gui.worker import Worker, WorkerError
@@ -32,6 +35,7 @@ from trading_helfer.services.chart_service import ChartService
 from trading_helfer.services.data_service import DataService
 from trading_helfer.services.fundamentals_service import FundamentalsService
 from trading_helfer.services.indicator_service import TEMPLATES_FILE_NAME, IndicatorService
+from trading_helfer.services.scanner_service import ScannerService
 from trading_helfer.services.strategy_service import StrategyService
 
 __all__ = ["TABS", "MainWindow"]
@@ -75,6 +79,8 @@ class MainWindow(QMainWindow):
         data_service: Datenupdate, Qualitätsbericht und Quellen für den Daten-Tab;
             Standard ist ein :class:`DataService` mit den Einstellungen von ``service``,
             der Änderungen nur im Speicher hält.
+        scanner_service: Strategien, Scan und Verlauf für den Scanner-Tab; Standard ist
+            ein :class:`ScannerService` mit den Einstellungen von ``service``.
     """
 
     def __init__(
@@ -86,6 +92,7 @@ class MainWindow(QMainWindow):
         fundamentals_service: FundamentalsService | None = None,
         strategy_service: StrategyService | None = None,
         data_service: DataService | None = None,
+        scanner_service: ScannerService | None = None,
     ) -> None:
         super().__init__(parent)
         self.service = service
@@ -134,6 +141,14 @@ class MainWindow(QMainWindow):
         self.data.update_finished.connect(self._on_data_changed)
         self.data.csv_imported.connect(self._on_data_changed)
         self.set_view("data", self.data)
+
+        self.scanner_service = (
+            scanner_service if scanner_service is not None else ScannerService(service.settings)
+        )
+        self.scanner = ScannerWidget(self.scanner_service, runner=self.run_task)
+        self.scanner.chart_requested.connect(self.show_signal)
+        self._signal_symbol: str | None = None
+        self.set_view("scanner", self.scanner)
 
         self.watchlist = WatchlistWidget(service)
         self.watchlist.symbol_selected.connect(self._on_symbol_selected)
@@ -324,8 +339,25 @@ class MainWindow(QMainWindow):
         self.chart_service.invalidate()
         self.fundamentals_service.invalidate()
 
+    def show_signal(self, symbol: str, timeframe: Timeframe, marker: Marker) -> None:
+        """Öffnet den Chart von ``symbol`` im Zeitrahmen ``timeframe`` mit dem Signal-Marker.
+
+        Vorherige Marker werden entfernt; sie gehören zu einem anderen Wert.
+        """
+        self._signal_symbol = symbol
+        self.chart.clear_markers()
+        self.chart.add_markers([marker])
+        self.tabs.setCurrentWidget(self.chart)
+        self.chart.set_timeframe(timeframe)
+        self.chart.load_symbol(symbol)
+        self.fundamentals.load_symbol(symbol)
+        self.statusBar().showMessage(texts.STATUS_SYMBOL.format(symbol=symbol))
+
     def _on_symbol_selected(self, symbol: str) -> None:
         self.statusBar().showMessage(texts.STATUS_SYMBOL.format(symbol=symbol))
+        if self._signal_symbol is not None and symbol != self._signal_symbol:
+            self._signal_symbol = None
+            self.chart.clear_markers()
         # Im Kennzahlen-Tab bleiben; sonst den Chart zeigen.
         if self.tabs.currentWidget() is not self.fundamentals:
             self.tabs.setCurrentWidget(self.chart)

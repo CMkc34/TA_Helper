@@ -32,6 +32,7 @@ EXPECTED_TABLES = {
     "backtest_trades",
     "backtest_equity",
     "signals",
+    "scans",
     "provider_requests",
 }
 ALL_VERSIONS = [m.version for m in discover_migrations()]
