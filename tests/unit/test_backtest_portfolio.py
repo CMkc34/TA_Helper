@@ -638,3 +638,11 @@ def test_order_strength_validation() -> None:
 def test_force_close_without_position() -> None:
     broker = SimBroker(1000.0, NO_COSTS)
     assert broker.force_close("AAA", date(2020, 1, 2), 10.0, "x") is None
+
+
+def test_passed_bars_after_end_are_ignored(settings: Settings) -> None:
+    bars = _three(60)
+    end = pd.Timestamp(bars["AAA"]["date"].iloc[29]).date()
+    result = _run(settings, bars, end=end)
+    assert result.equity["date"].max() == pd.Timestamp(end)
+    assert result.end == end

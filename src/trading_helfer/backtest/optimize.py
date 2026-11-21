@@ -339,6 +339,8 @@ def _calmar(result: BacktestResult, full: PerformanceMetrics) -> float | None:
     window = equity.iloc[first:].reset_index(drop=True)
     if len(window) < 2:
         return full.calmar
+    if float(window["equity"].iloc[0]) <= 0:
+        return None  # Konto war zu Beginn des Fensters aufgebraucht
     m = compute_metrics(window, None, result.timeframe)
     return m.calmar
 
