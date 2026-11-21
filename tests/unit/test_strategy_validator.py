@@ -57,8 +57,8 @@ class Demo(Strategy):
     return HEADER + "\n" + body
 
 
-def _check(source: str, **kwargs: object) -> ValidationReport:
-    return validate(source, filename="demo.py", isolate=False, **kwargs)  # type: ignore[arg-type]
+def _check(source: str, filename: str = "demo.py") -> ValidationReport:
+    return validate(source, filename=filename, isolate=False)
 
 
 def _assert_rejected(report: ValidationReport, stage: ValidationStage) -> StageResult:
@@ -216,6 +216,7 @@ def test_all_security_issues_listed() -> None:
         "from trading_helfer.core.types import OrderType, Side",
         "x = np.lib.stride_tricks.sliding_window_view(np.arange(5), 2)",
         "name = __name__",
+        '__all__ = ["x"]',
     ],
 )
 def test_allowed_code_passes_security(code: str) -> None:

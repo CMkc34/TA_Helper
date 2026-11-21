@@ -180,6 +180,9 @@ FORBIDDEN_ATTRIBUTES: Final[frozenset[str]] = frozenset(
 """Attribut- und Importnamen, die für Datei-, Netzwerk- oder Systemzugriffe stehen."""
 
 _ALLOWED_DUNDERS: Final[frozenset[str]] = frozenset({"__init__", "__name__", "__doc__"})
+_ALLOWED_NAME_DUNDERS: Final[frozenset[str]] = frozenset(
+    {"__name__", "__doc__", "__file__", "__all__", "__slots__"}
+)
 _SEMVER: Final = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
 
 _TIMEOUT_PREFIX: Final = "Zeitlimit"
@@ -483,7 +486,7 @@ def _security_issues(tree: ast.Module) -> Iterator[tuple[int, str]]:
                     line,
                     f"„{node.id}“ ist nicht erlaubt (keine Datei-, Code- oder Systemzugriffe).",
                 )
-            elif _is_dunder(node.id) and node.id not in ("__name__", "__doc__", "__file__"):
+            elif _is_dunder(node.id) and node.id not in _ALLOWED_NAME_DUNDERS:
                 yield line, f"Zugriff auf „{node.id}“ ist nicht erlaubt."
         elif isinstance(node, ast.Attribute) and _forbidden_attribute(node.attr):
             yield (
