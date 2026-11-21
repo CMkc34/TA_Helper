@@ -156,6 +156,9 @@ class BacktestResult:
         open_positions: Am Ende noch offene Positionen.
         warmup_end: Datum der ersten Kerze, auf der die Strategie aufgerufen wurde,
             oder ``None``, wenn die Indikatoren nie vollständig waren.
+        last_close: Close der letzten abgeschlossenen Kerze.
+        last_indicators: Indikatorwerte der Strategie auf der letzten Kerze (für den
+            Scanner; nicht Teil von :meth:`fingerprint`).
     """
 
     strategy_id: str
@@ -174,6 +177,8 @@ class BacktestResult:
     log: list[str] = field(default_factory=list)
     open_positions: list[Position] = field(default_factory=list)
     warmup_end: Date | None = None
+    last_close: float | None = None
+    last_indicators: dict[str, Any] = field(default_factory=dict)
 
     @property
     def total_return_pct(self) -> float:
@@ -535,6 +540,8 @@ class _Run:
             log=self.log,
             open_positions=open_positions,
             warmup_end=self.warmup_end,
+            last_close=float(self.close[-1]),
+            last_indicators=self.series.ind_at(len(self.frame) - 1).row(),
         )
 
     def _orders_frame(self, open_orders: list[PendingOrder]) -> pd.DataFrame:

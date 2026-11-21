@@ -1,10 +1,9 @@
 """Scanner: wendet eine Strategie auf ein Universum an (docs/SPEC.md, „Scanner“).
 
-Je Wert wird die Strategie wie in einem Einzelwert-Backtest Kerze für Kerze über die
-abgeschlossenen Kerzen bis ``as_of`` geführt; Orders laufen dabei über den simulierten
-Broker (:class:`~trading_helfer.backtest.broker_sim.SimBroker`), damit Position, Cash und
-Equity im Kontext genau wie im Backtest aussehen. Ein Signal ist jede Order, die die
-Strategie auf der **letzten abgeschlossenen Kerze** abgibt:
+Je Wert läuft ein Einzelwert-Backtest
+(:func:`~trading_helfer.backtest.engine.run_backtest`) bis ``as_of``; Scanner und Backtest
+nutzen also dieselbe Engine, denselben Broker und dieselbe Warm-up-Regel. Ein Signal ist
+jede Order, die die Strategie auf der **letzten abgeschlossenen Kerze** abgibt:
 
 - ``BUY``: Order eröffnet oder vergrößert eine Long-Position.
 - ``SELL``: Order eröffnet oder vergrößert eine Short-Position.
@@ -18,14 +17,16 @@ Regeln:
 
 - Simulationsfenster: Standard sind die letzten :data:`DEFAULT_HISTORY_YEARS` Jahre vor
   dem Stichtag (Einschwingphase für Indikatoren und Positionen); ``start`` oder
-  ``history_years=None`` ändern das. Ein Scan stimmt mit einem Backtest überein, der am
-  selben Tag beginnt.
+  ``history_years=None`` ändern das. Für den Anlauf der Indikatoren werden zusätzlich
+  :data:`WARMUP_YEARS` Jahre davor geladen. Ein Scan stimmt mit einem Backtest überein,
+  der am selben Tag beginnt.
 - Nur abgeschlossene Kerzen: Die letzte, noch unvollständige Kerze (``is_partial``)
   wird verworfen. Mit ``as_of`` werden nur Tageskurse bis einschließlich ``as_of``
   geladen; die Kerze, in die ``as_of`` fällt, zählt also nur, wenn sie an diesem Tag
   abgeschlossen ist.
-- Universum point in time: Bei einem Index-Code dürfen Einstiege nur an Tagen entstehen,
-  an denen der Wert Indexmitglied war. Gescannt werden die Mitglieder am Stichtag.
+- Universum point in time: Bei einem Index-Code werden die Mitglieder am Stichtag
+  gescannt; Einstiegssignale zählen nur, wenn der Wert am Tag der Signalkerze
+  Indexmitglied war.
 - ``strength``: Liefert :meth:`Strategy.indicators` eine Spalte ``strength``, ist das
   ihr Wert auf der Signalkerze, sonst leer.
 - Ergebnis-Spalten: :data:`RESULT_COLUMNS` und danach alle Indikatoren der Strategie auf
@@ -46,20 +47,20 @@ from typing import Any, Final
 import numpy as np
 import pandas as pd
 
-from trading_helfer.backtest.broker_sim import Bar, SimBroker
 from trading_helfer.backtest.costs import CostModel
+from trading_helfer.backtest.engine import BacktestError, StrategyError, run_backtest
 from trading_helfer.core.config import Settings
 from trading_helfer.core.types import SignalType, Timeframe
-from trading_helfer.data.resample import PARTIAL_COLUMN, resample
 from trading_helfer.data.storage import MarketStore
-from trading_helfer.data.universe import INDEX_CODES, members_on, membership_intervals
+from trading_helfer.data.universe import INDEX_CODES, members_on
 from trading_helfer.fundamentals.metrics import METRIC_NAMES, compute_metrics
-from trading_helfer.strategies.base import BarContext, Order, OrderSide, Params, Strategy
+from trading_helfer.strategies.base import Order, OrderSide, Params, Strategy
 
 __all__ = [
     "DEFAULT_HISTORY_YEARS",
     "RESULT_COLUMNS",
     "STRENGTH_COLUMN",
+    "WARMUP_YEARS",
     "ScanError",
     "ScanFilters",
     "export_csv",
@@ -82,14 +83,15 @@ RESULT_COLUMNS: Final[tuple[str, ...]] = (
 )
 """Feste Spalten des Scan-Ergebnisses; danach folgen die Indikatoren der Strategie."""
 
-DEFAULT_HISTORY_YEARS: Final = 10
+DEFAULT_HISTORY_YEARS: Final = 5
 """Standard-Länge der Simulation vor dem Stichtag in Jahren (Einschwingphase)."""
 
 STRENGTH_COLUMN: Final = "strength"
 """Indikatorspalte, aus der die Signalstärke gelesen wird."""
 
-_ATR_COLUMN: Final = "atr"
-_BAR_FIELDS: Final = ("open", "high", "low", "close")
+WARMUP_YEARS: Final = 2
+"""So viele Jahre vor dem Simulationsbeginn werden zusätzlich für den Anlauf der
+Indikatoren geladen (gehandelt wird erst ab dem Beginn)."""
 
 ProgressCallback = Callable[[int, int], None]
 """Fortschritt: ``(erledigt, gesamt)``."""
@@ -168,9 +170,13 @@ class ScanFilters:
 
 def signal_of(order: Order) -> SignalType:
     """Signalart einer Order: BUY (Long-Einstieg), SELL (Short-Einstieg) oder EXIT."""
-    if not order.side.is_entry:
+    return _signal_of_side(order.side)
+
+
+def _signal_of_side(side: OrderSide) -> SignalType:
+    if not side.is_entry:
         return SignalType.EXIT
-    return SignalType.BUY if order.side is OrderSide.BUY else SignalType.SELL
+    return SignalType.BUY if side is OrderSide.BUY else SignalType.SELL
 
 
 def scan(
@@ -246,7 +252,6 @@ def scan(
 
     sectors = _sectors(store, symbols)
     symbols = [s for s in symbols if filters.match_sector(sectors.get(s))]
-    membership = _membership(index_code) if index_code is not None else None
 
     rows: list[dict[str, Any]] = []
     skipped: dict[str, str] = {}
@@ -263,12 +268,16 @@ def scan(
                 costs=costs,
                 start=first,
                 end=end,
-                member_intervals=None if membership is None else membership.get(symbol, []),
+                index_code=index_code,
             )
         except _SkipError as exc:
             skipped[symbol] = str(exc)
             row = None
-        except Exception as exc:  # Fehler einer Strategie darf den Scan nicht abbrechen
+        except StrategyError as exc:
+            logger.warning("Scan %s: %s", symbol, exc)
+            skipped[symbol] = f"Fehler der Strategie: {exc}"
+            row = None
+        except Exception as exc:  # unerwarteter Fehler darf den Scan nicht abbrechen
             logger.warning("Scan %s: Fehler der Strategie: %s", symbol, exc)
             skipped[symbol] = f"Fehler der Strategie: {type(exc).__name__}: {exc}"
             row = None
@@ -375,33 +384,6 @@ def _years_before(day: dt.date, years: int) -> dt.date:
         return day.replace(year=day.year - years, day=28)
 
 
-def _membership(code: str) -> dict[str, list[tuple[dt.date | None, dt.date | None]]]:
-    intervals = membership_intervals(code)
-    result: dict[str, list[tuple[dt.date | None, dt.date | None]]] = {}
-    for row in intervals.itertuples(index=False):
-        start = row.start_date if isinstance(row.start_date, dt.date) else None
-        stop = row.end_date if isinstance(row.end_date, dt.date) else None
-        result.setdefault(str(row.symbol), []).append((start, stop))
-    return result
-
-
-def _member_mask(
-    dates: pd.Series[Any], intervals: list[tuple[dt.date | None, dt.date | None]] | None
-) -> np.ndarray[Any, np.dtype[np.bool_]]:
-    if intervals is None:
-        return np.ones(len(dates), dtype=bool)
-    values = dates.to_numpy(dtype="datetime64[ns]")
-    mask = np.zeros(len(values), dtype=bool)
-    for start, stop in intervals:
-        inside = np.ones(len(values), dtype=bool)
-        if start is not None:
-            inside &= values >= np.datetime64(start, "ns")
-        if stop is not None:
-            inside &= values < np.datetime64(stop, "ns")
-        mask |= inside
-    return mask
-
-
 def _sectors(store: MarketStore, symbols: list[str]) -> dict[str, str | None]:
     if not symbols:
         return {}
@@ -409,24 +391,6 @@ def _sectors(store: MarketStore, symbols: list[str]) -> dict[str, str | None]:
         "SELECT symbol, sector FROM instruments WHERE list_contains(?, symbol)", [symbols]
     ).fetchall()
     return {str(sym): (str(sec) if sec is not None else None) for sym, sec in rows}
-
-
-def _closed_bars(
-    store: MarketStore,
-    symbol: str,
-    timeframe: Timeframe,
-    start: dt.date | None,
-    end: dt.date | None,
-) -> pd.DataFrame:
-    daily = store.load_bars(symbol, start=start, end=end)
-    if daily.empty:
-        raise _SkipError("keine Kurse")
-    daily = daily.drop(columns=["adj_factor"], errors="ignore")
-    bars = resample(daily, timeframe)
-    closed = bars.loc[~bars[PARTIAL_COLUMN].to_numpy(dtype=bool)]
-    if closed.empty:
-        raise _SkipError("keine abgeschlossene Kerze")
-    return closed.drop(columns=[PARTIAL_COLUMN]).reset_index(drop=True)
 
 
 def _scan_symbol(
@@ -440,76 +404,66 @@ def _scan_symbol(
     costs: CostModel,
     start: dt.date | None,
     end: dt.date | None,
-    member_intervals: list[tuple[dt.date | None, dt.date | None]] | None,
+    index_code: str | None,
 ) -> dict[str, Any] | None:
-    bars = _closed_bars(store, symbol, timeframe, start, end)
-    series = strategy.prepare(bars, p)
-    member: list[bool] = _member_mask(bars["date"], member_intervals).tolist()
-    dates: list[dt.date] = [ts.date() for ts in pd.DatetimeIndex(bars["date"])]
-    o, h, low, c = (bars[f].to_numpy(dtype=float).tolist() for f in _BAR_FIELDS)
-    atr = series.ind_at(len(bars) - 1)
-    atr_values = atr.column(_ATR_COLUMN) if _ATR_COLUMN in atr else None
-
-    broker = SimBroker(settings.default_capital, costs, allow_fractional=settings.allow_fractional)
-    last = len(bars) - 1
-    orders: list[Order] = []
-    for t in range(len(bars)):
-        bar_atr = _finite(atr_values[t]) if atr_values is not None else None
-        position = broker.position(symbol)
-        # Ohne Position und offene Orders hat die Kerze für den Broker keine Wirkung.
-        if t > 0 and (position is not None or broker.open_orders(symbol)):
-            broker.process_bar(symbol, Bar(dates[t], o[t], h[t], low[t], c[t]), atr=bar_atr)
-            position = broker.position(symbol)
-        cash = broker.cash
-        ctx = BarContext(
-            symbol=symbol,
-            date=dates[t],
-            timeframe=timeframe,
-            bars=series.bars_at(t),
-            ind=series.ind_at(t),
-            position=position,
-            cash=cash,
-            equity=cash if position is None else broker.equity(),
-            is_member=member[t],
+    load_from = _years_before(start, WARMUP_YEARS) if start is not None else None
+    daily = store.load_bars(symbol, start=load_from, end=end)
+    if daily.empty:
+        raise _SkipError("keine Kurse")
+    first_day = pd.Timestamp(daily["date"].iloc[0]).date()
+    last_day = pd.Timestamp(daily["date"].iloc[-1]).date()
+    trade_from = max(start, first_day) if start is not None else first_day
+    if trade_from > last_day:
+        raise _SkipError("keine Kurse im Zeitraum")
+    try:
+        result = run_backtest(
+            strategy,
+            p,
+            symbol,
+            timeframe,
+            trade_from,
+            end if end is not None else last_day,
+            settings,
+            bars=daily.drop(columns=["adj_factor"], errors="ignore"),
+            costs=costs,
         )
-        orders = [order for order in strategy.on_bar(ctx) if member[t] or not order.side.is_entry]
-        if t == last:
-            break
-        for order in orders:
-            broker.submit(order, date=dates[t], close=c[t], atr=bar_atr)
-
-    chosen = _pick(orders)
-    if chosen is None:
+    except StrategyError:
+        raise
+    except BacktestError as exc:
+        raise _SkipError("keine abgeschlossene Kerze") from exc
+    if result.equity.empty:
+        raise _SkipError("keine abgeschlossene Kerze")
+    bar_date = pd.Timestamp(result.equity["date"].iloc[-1])
+    orders = result.orders.loc[result.orders["submitted"] == bar_date]
+    is_entry = np.array([OrderSide(v).is_entry for v in orders["side"]], dtype=bool)
+    if index_code is not None and symbol not in members_on(index_code, bar_date.date()):
+        orders, is_entry = orders.loc[~is_entry], is_entry[~is_entry]
+    if orders.empty:
         return None
-    indicators = series.ind_at(last).row()
-    strength = indicators.get(STRENGTH_COLUMN)
+    entries = orders.loc[is_entry]
+    chosen = (entries if not entries.empty else orders).iloc[0]
+    indicators = dict(result.last_indicators)
     row: dict[str, Any] = {
         "symbol": symbol,
-        "date": pd.Timestamp(dates[last]),
-        "signal": signal_of(chosen),
-        "strength": _finite(strength),
-        "close": float(c[last]),
+        "date": bar_date,
+        "signal": _signal_of_side(OrderSide(chosen["side"])),
+        "strength": _finite(indicators.pop(STRENGTH_COLUMN, None)),
+        "close": result.last_close,
         "note": _note(chosen),
     }
-    row.update({k: v for k, v in indicators.items() if k != STRENGTH_COLUMN})
+    row.update(indicators)
     return row
 
 
-def _pick(orders: list[Order]) -> Order | None:
-    for order in orders:
-        if order.side.is_entry:
-            return order
-    return orders[0] if orders else None
-
-
-def _note(order: Order) -> str:
-    parts = [order.side.value, order.type.value]
-    if order.stop_price is not None:
-        parts.append(f"Stop {order.stop_price:g}")
-    if order.limit_price is not None:
-        parts.append(f"Limit {order.limit_price:g}")
-    if order.tag:
-        parts.append(order.tag)
+def _note(order: pd.Series[Any]) -> str:
+    parts = [str(order["side"]), str(order["type"])]
+    stop, limit = _finite(order["stop_price"]), _finite(order["limit_price"])
+    if stop is not None:
+        parts.append(f"Stop {stop:g}")
+    if limit is not None:
+        parts.append(f"Limit {limit:g}")
+    if order["tag"]:
+        parts.append(str(order["tag"]))
     return " ".join(parts)
 
 

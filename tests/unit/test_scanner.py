@@ -13,6 +13,7 @@ import pytest
 
 from trading_helfer.backtest.broker_sim import Bar, SimBroker
 from trading_helfer.backtest.costs import CostModel
+from trading_helfer.backtest.engine import run_backtest
 from trading_helfer.core.config import Settings
 from trading_helfer.core.types import SignalType, Timeframe
 from trading_helfer.data.resample import resample
@@ -285,6 +286,46 @@ def test_scan_matches_backtest_entries(store: MarketStore, timeframe: Timeframe)
         assert closed.index(fill) == closed.index(signal) + 1
 
 
+def test_scan_matches_engine_backtest(store: MarketStore) -> None:
+    """Scan an jedem Stichtag = Einstiege eines Backtests der Engine mit gleichem Beginn."""
+    daily = wave_bars(start="2012-01-03", days=1500, period=50.0)
+    store.upsert_bars("AAA", daily)
+    settings = Settings(fee_per_order=1.0, slippage_pct=0.1)
+    begin, end = dt.date(2015, 1, 2), dt.date(2017, 12, 29)
+    backtest = run_backtest(
+        SmaCross(),
+        None,
+        "AAA",
+        Timeframe.W1,
+        begin,
+        end,
+        settings,
+        bars=store.load_bars("AAA").drop(columns=["adj_factor"]),
+    )
+    entries = backtest.orders.loc[backtest.orders["side"] == "BUY", "submitted"]
+    expected = {d.date() for d in entries}
+    assert len(expected) >= 5
+
+    weekly = resample(daily, Timeframe.W1)
+    days = [d.date() for d in weekly["date"] if begin <= d.date() <= end]
+    found = set()
+    for day in days:
+        result = scan(
+            SmaCross,
+            None,
+            ["AAA"],
+            "W1",
+            as_of=day,
+            start=begin,
+            store=store,
+            settings=settings,
+            save=False,
+        )
+        if not result.empty and result["signal"].iloc[0] == "BUY":
+            found.add(result["date"].iloc[0].date())
+    assert found == expected
+
+
 # -- Universum ----------------------------------------------------------------
 
 
@@ -311,28 +352,25 @@ def test_entries_only_while_member(store: MarketStore, monkeypatch: pytest.Monke
     import trading_helfer.scanner.scan as mod
 
     store.upsert_bars("AAA", wave_bars())
-    monkeypatch.setattr(mod, "members_on", lambda code, day: {"AAA"})
-    intervals = pd.DataFrame(
-        [("SP500", "AAA", dt.date(2015, 7, 1), dt.date(2015, 9, 1))],
-        columns=["index_code", "symbol", "start_date", "end_date"],
-    )
-    monkeypatch.setattr(mod, "membership_intervals", lambda code: intervals)
-    outside = scan(AlwaysShort, None, "SP500", "W1", as_of="2015-06-12", store=store)
-    assert outside.empty
-    inside = scan(AlwaysShort, None, "SP500", "W1", as_of="2015-07-10", store=store)
+    members = {dt.date(2015, 6, 12): {"AAA"}, dt.date(2015, 6, 19): set()}
+
+    def fake_members(code: str, day: dt.date) -> set[str]:
+        return members.get(day, {"AAA"})
+
+    monkeypatch.setattr(mod, "members_on", fake_members)
+    inside = scan(AlwaysShort, None, "SP500", "W1", as_of="2015-06-12", store=store)
     assert list(inside["signal"]) == ["SELL"]
-    open_start = pd.DataFrame(
-        [("SP500", "AAA", None, None)],
-        columns=["index_code", "symbol", "start_date", "end_date"],
-    )
-    monkeypatch.setattr(mod, "membership_intervals", lambda code: open_start)
-    assert not scan(AlwaysShort, None, "SP500", "W1", as_of="2015-06-12", store=store).empty
+    # Am Signaltag kein Mitglied: Einstieg fällt weg, der Ausstieg bleibt.
+    outside = scan(AlwaysShort, None, "SP500", "W1", as_of="2015-06-21", store=store)
+    assert list(outside["signal"]) == ["EXIT"]
 
 
 def test_strategy_error_skips_symbol(filled: MarketStore) -> None:
     result = scan(Broken(), None, ["AAA", "ZZZ"], "W1", store=filled)
     assert result.empty
-    assert result.attrs["skipped"]["AAA"].startswith("Fehler der Strategie: RuntimeError")
+    message = result.attrs["skipped"]["AAA"]
+    assert message.startswith("Fehler der Strategie:")
+    assert "absichtlich" in message
     assert result.attrs["skipped"]["ZZZ"] == "keine Kurse"
 
 
@@ -503,23 +541,28 @@ def test_history_window(store: MarketStore, monkeypatch: pytest.MonkeyPatch) -> 
     import trading_helfer.scanner.scan as mod
 
     store.upsert_bars("AAA", wave_bars(start="2000-01-03", days=4000))
-    seen: list[dt.date | None] = []
-    original = mod._closed_bars
+    seen: list[tuple[dt.date, dt.date]] = []
+    original = mod.run_backtest
 
-    def spy(*args: object) -> pd.DataFrame:
-        seen.append(args[3])  # type: ignore[arg-type]
-        return original(*args)  # type: ignore[arg-type]
+    def spy(strategy, params, symbol, timeframe, start, end, settings, **kw):  # type: ignore[no-untyped-def]
+        seen.append((start, kw["bars"]["date"].iloc[0].date()))
+        return original(strategy, params, symbol, timeframe, start, end, settings, **kw)
 
-    monkeypatch.setattr(mod, "_closed_bars", spy)
+    monkeypatch.setattr(mod, "run_backtest", spy)
     scan(AlwaysShort, None, ["AAA"], "W1", store=store, save=False)
     scan(AlwaysShort, None, ["AAA"], "W1", as_of="2012-02-29", store=store, save=False)
     scan(AlwaysShort, None, ["AAA"], "W1", history_years=None, store=store, save=False)
     scan(AlwaysShort, None, ["AAA"], "W1", start="2010-01-01", store=store, save=False)
+    scan(AlwaysShort, None, ["AAA"], "W1", start="1995-01-01", store=store, save=False)
     last = store.last_date("AAA")
     assert last is not None
-    assert seen == [
-        last.replace(year=last.year - 10),
-        dt.date(2002, 2, 28),
-        None,
-        dt.date(2010, 1, 1),
-    ]
+    ten = last.replace(year=last.year - mod.DEFAULT_HISTORY_YEARS)
+    assert seen[0][0] == ten
+    assert seen[0][1] >= ten.replace(year=ten.year - mod.WARMUP_YEARS)
+    assert seen[1][0] == dt.date(2007, 2, 28)
+    assert seen[2] == (dt.date(2000, 1, 3), dt.date(2000, 1, 3))
+    assert seen[3][0] == dt.date(2010, 1, 1)
+    assert seen[3][1] >= dt.date(2008, 1, 1)
+    assert seen[4] == (dt.date(2000, 1, 3), dt.date(2000, 1, 3))
+    late = scan(AlwaysShort, None, ["AAA"], "W1", start="2016-01-01", store=store)
+    assert late.attrs["skipped"] == {"AAA": "keine Kurse im Zeitraum"}
