@@ -75,12 +75,17 @@ def test_layout_survives_restart(
     first.move(30, 40)
     first.show()
     qtbot.waitExposed(first)
+    saved_size = first.size()
+    saved_pos = first.geometry().topLeft()
     first.close()
 
     second = MainWindow(AppService(settings, state_path))
     qtbot.addWidget(second)
-    assert (second.width(), second.height()) == (700, 500)
-    assert second.geometry().topLeft() == first.geometry().topLeft()
+    # Die Plattform darf die Wunschgröße an Mindestgrößen anpassen; verglichen wird
+    # deshalb mit der tatsächlich gespeicherten Größe.
+    assert second.size() == saved_size
+    assert second.geometry().topLeft() == saved_pos
+    assert saved_size.height() == 500
     assert second.service.theme == "dark"
     assert second.theme_actions["dark"].isChecked()
     assert second.watchlist.visible_symbols() == ["AAPL"]
