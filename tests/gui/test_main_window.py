@@ -40,11 +40,11 @@ def test_menus(window: MainWindow) -> None:
 
 
 def test_set_view_replaces_placeholder(window: MainWindow, qtbot: QtBot) -> None:
-    assert isinstance(window.tab_widget("chart"), QLabel)
-    view = QLabel("echter Chart")
-    window.set_view("chart", view)
-    assert window.tab_widget("chart") is view
-    assert window.tabs.tabText(0) == "Chart"
+    assert isinstance(window.tab_widget("fundamentals"), QLabel)
+    view = QLabel("echte Kennzahlen")
+    window.set_view("fundamentals", view)
+    assert window.tab_widget("fundamentals") is view
+    assert window.tabs.tabText(1) == "Kennzahlen"
 
 
 def test_about_dialog(window: MainWindow, dialogs: list[tuple[str, str]]) -> None:

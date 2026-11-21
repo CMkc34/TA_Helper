@@ -16,6 +16,7 @@ from trading_helfer.core.logging import setup_logging
 from trading_helfer.gui import texts
 from trading_helfer.gui.main_window import MainWindow
 from trading_helfer.services.app_service import AppService
+from trading_helfer.services.chart_service import ChartService, store_loader
 
 __all__ = ["get_application", "install_exception_hook", "run_gui"]
 
@@ -83,7 +84,8 @@ def run_gui(
     setup_logging(settings)
     logger.info("Trading Helfer startet")
     service = AppService(settings, state_path)
-    window = MainWindow(service)
+    chart_service = ChartService(store_loader(settings.database_path))
+    window = MainWindow(service, chart_service=chart_service)
     previous_hook = install_exception_hook(window)
     try:
         window.show()

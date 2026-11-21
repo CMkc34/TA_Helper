@@ -54,3 +54,22 @@ ERROR_TASK: Final = "Die Aufgabe „{name}“ ist fehlgeschlagen:\n\n{message}"
 ERROR_UNEXPECTED: Final = "Unerwarteter Fehler:\n\n{message}\n\nDetails stehen im Log."
 ERROR_CONFIG_TITLE: Final = "Einstellungen ungültig"
 TASK_DEFAULT_NAME: Final = "Aufgabe"
+
+# Chart
+CHART_TIMEFRAME_TOOLTIP: Final = "Zeitrahmen {timeframe}"
+CHART_LOG: Final = "Logarithmisch"
+CHART_ADJUSTED: Final = "Bereinigt"
+CHART_ADJUSTED_TOOLTIP: Final = "Kurse um Splits und Dividenden bereinigt (sonst roh)"
+CHART_NO_SYMBOL: Final = "Symbol in der Watchlist anklicken, um den Chart zu laden."
+CHART_LOADING: Final = "{symbol} wird geladen …"
+CHART_NO_DATA: Final = "Keine Kursdaten für {symbol} vorhanden."
+CHART_LOAD_FAILED: Final = "{symbol} konnte nicht geladen werden: {message}"
+CHART_TASK_NAME: Final = "Chart {symbol}"
+CHART_HEADER: Final = "{symbol} · {timeframe} · {mode}"
+CHART_MODE_ADJUSTED: Final = "bereinigt"
+CHART_MODE_RAW: Final = "roh"
+CHART_PARTIAL: Final = " (unvollständig)"
+CHART_OHLCV: Final = (
+    "{date}{partial}   Eröffnung {open}   Hoch {high}   Tief {low}   "
+    "Schluss {close}   Volumen {volume}"
+)
