@@ -1,0 +1,10 @@
+{
+  "symbol": "SYNTH",
+  "quoteType": "EQUITY",
+  "longName": "Synthetic Test Corp.",
+  "shortName": "Synthetic",
+  "exchange": "NMS",
+  "sector": "Technology",
+  "industry": "Software - Infrastructure",
+  "currency": "USD"
+}
