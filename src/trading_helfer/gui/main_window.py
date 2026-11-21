@@ -22,11 +22,13 @@ from trading_helfer import __version__
 from trading_helfer.gui import texts
 from trading_helfer.gui.theme import apply_theme
 from trading_helfer.gui.widgets.chart import ChartWidget
+from trading_helfer.gui.widgets.fundamentals import FundamentalsWidget
 from trading_helfer.gui.widgets.watchlist import WatchlistWidget
 from trading_helfer.gui.worker import Worker, WorkerError
 from trading_helfer.services.app_service import AppService, ThemeName
 from trading_helfer.services.chart_service import ChartService
 from trading_helfer.services.indicator_service import TEMPLATES_FILE_NAME, IndicatorService
+from trading_helfer.services.fundamentals_service import FundamentalsService
 
 __all__ = ["TABS", "MainWindow"]
 
@@ -62,6 +64,8 @@ class MainWindow(QMainWindow):
         thread_pool: Pool für Hintergrundaufgaben; Standard ist der globale Pool.
         chart_service: Liefert die Kerzen für den Chart-Tab; Standard ist ein
             :class:`ChartService` ohne Kursquelle (leere Charts).
+        fundamentals_service: Liefert die Kennzahlen für den Kennzahlen-Tab; Standard
+            ist ein :class:`FundamentalsService` ohne Datenbank (leere Kennzahlen).
     """
 
     def __init__(
@@ -70,6 +74,7 @@ class MainWindow(QMainWindow):
         thread_pool: QThreadPool | None = None,
         parent: QWidget | None = None,
         chart_service: ChartService | None = None,
+        fundamentals_service: FundamentalsService | None = None,
     ) -> None:
         super().__init__(parent)
         self.service = service
@@ -92,6 +97,12 @@ class MainWindow(QMainWindow):
             self.chart_service, runner=self.run_task, indicator_service=self.indicator_service
         )
         self.set_view("chart", self.chart)
+
+        self.fundamentals_service = (
+            fundamentals_service if fundamentals_service is not None else FundamentalsService()
+        )
+        self.fundamentals = FundamentalsWidget(self.fundamentals_service, runner=self.run_task)
+        self.set_view("fundamentals", self.fundamentals)
 
         self.watchlist = WatchlistWidget(service)
         self.watchlist.symbol_selected.connect(self._on_symbol_selected)
@@ -249,5 +260,8 @@ class MainWindow(QMainWindow):
 
     def _on_symbol_selected(self, symbol: str) -> None:
         self.statusBar().showMessage(texts.STATUS_SYMBOL.format(symbol=symbol))
-        self.tabs.setCurrentWidget(self.chart)
+        # Im Kennzahlen-Tab bleiben; sonst den Chart zeigen.
+        if self.tabs.currentWidget() is not self.fundamentals:
+            self.tabs.setCurrentWidget(self.chart)
         self.chart.load_symbol(symbol)
+        self.fundamentals.load_symbol(symbol)

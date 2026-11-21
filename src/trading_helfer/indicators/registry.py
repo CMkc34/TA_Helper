@@ -189,4 +189,4 @@ def _unregister(name: str) -> None:
 
 def _load_builtin() -> None:
     """Importiert die mitgelieferten Indikator-Module, damit sie registriert sind."""
-    from trading_helfer.indicators import momentum, trend, volatility  # noqa: F401
+    from trading_helfer.indicators import momentum, trend, volatility, volume  # noqa: F401
