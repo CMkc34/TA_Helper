@@ -1,0 +1,128 @@
+name: Paket
+
+# Baut das Windows-Paket (PyInstaller, .exe in Zip) und prüft es mit --selftest auf
+# einem Runner ohne Python. Bei Tags v* wird das Zip zusätzlich als Release veröffentlicht.
+
+on:
+  push:
+    tags: ["v*"]
+    branches: [main]
+  pull_request:
+    paths:
+      - "packaging/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/package.yml"
+      - "src/trading_helfer/app.py"
+      - "src/trading_helfer/gui/application.py"
+      - "src/trading_helfer/services/selftest.py"
+  workflow_dispatch:
+
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Bauen (Windows)
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Abhängigkeiten installieren
+        run: uv sync --locked --no-dev --group package
+
+      - name: Version bestimmen
+        id: version
+        shell: bash
+        run: |
+          version=$(uv run --no-sync python -c "import trading_helfer; print(trading_helfer.__version__)")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/v* && "${GITHUB_REF_NAME#v}" != "$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME passt nicht zur Version $version in pyproject.toml/__init__.py."
+            exit 1
+          fi
+
+      - name: PyInstaller
+        run: uv run --no-sync pyinstaller packaging/trading_helfer.spec --noconfirm --clean
+
+      - name: Zip erstellen
+        shell: pwsh
+        run: |
+          $zip = "TradingHelfer-${{ steps.version.outputs.version }}-windows-x64.zip"
+          Compress-Archive -Path dist/TradingHelfer -DestinationPath $zip
+          Get-Item $zip | Format-List Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TradingHelfer-windows
+          path: TradingHelfer-*-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  smoke-test:
+    name: Selbsttest (Windows ohne Python)
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: TradingHelfer-windows
+
+      - name: Entpacken
+        shell: pwsh
+        run: Expand-Archive -Path TradingHelfer-*.zip -DestinationPath app
+
+      - name: Selbsttest Konsole (trading-helfer.exe --selftest)
+        shell: pwsh
+        run: |
+          # Kein Python im PATH: das Paket muss alles selbst mitbringen.
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'python|WindowsApps' }) -join ';'
+          $env:PYTHONHOME = $null; $env:PYTHONPATH = $null
+          if (Get-Command python -ErrorAction SilentlyContinue) { throw "python ist noch im PATH" }
+          & app/TradingHelfer/trading-helfer.exe --version
+          & app/TradingHelfer/trading-helfer.exe --selftest
+          if ($LASTEXITCODE -ne 0) { throw "Selbsttest fehlgeschlagen (Exit-Code $LASTEXITCODE)" }
+
+      - name: Selbsttest Fenster (TradingHelfer.exe --selftest)
+        shell: pwsh
+        run: |
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'python|WindowsApps' }) -join ';'
+          $report = Join-Path $env:RUNNER_TEMP 'selbsttest.txt'
+          $p = Start-Process -FilePath app/TradingHelfer/TradingHelfer.exe `
+            -ArgumentList '--selftest', "`"$report`"" -Wait -PassThru
+          if (Test-Path $report) { Get-Content $report }
+          if ($p.ExitCode -ne 0) { throw "Selbsttest fehlgeschlagen (Exit-Code $($p.ExitCode))" }
+          # Der Selbsttest nutzt einen temporären Ordner, im App-Ordner entsteht nichts.
+          $extra = Get-ChildItem app/TradingHelfer -Name | Where-Object { $_ -notin @('_internal', 'TradingHelfer.exe', 'trading-helfer.exe') }
+          if ($extra) { throw "Unerwartete Dateien im App-Ordner: $extra" }
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, smoke-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: TradingHelfer-windows
+
+      - name: Release mit Zip anlegen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" TradingHelfer-*-windows-x64.zip \
+            --repo "$GITHUB_REPOSITORY" --title "Trading Helfer $GITHUB_REF_NAME" --generate-notes
