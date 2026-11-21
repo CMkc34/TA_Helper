@@ -27,6 +27,7 @@ from trading_helfer.gui.widgets.chart import ChartWidget
 from trading_helfer.gui.widgets.data import DataWidget
 from trading_helfer.gui.widgets.fundamentals import FundamentalsWidget
 from trading_helfer.gui.widgets.scanner import ScannerWidget
+from trading_helfer.gui.widgets.strategies import StrategiesWidget
 from trading_helfer.gui.widgets.watchlist import WatchlistWidget
 from trading_helfer.gui.worker import Worker, WorkerError
 from trading_helfer.services.app_service import AppService, ThemeName
@@ -35,6 +36,7 @@ from trading_helfer.services.data_service import DataService
 from trading_helfer.services.fundamentals_service import FundamentalsService
 from trading_helfer.services.indicator_service import TEMPLATES_FILE_NAME, IndicatorService
 from trading_helfer.services.scanner_service import ScannerService
+from trading_helfer.services.strategy_service import StrategyService
 
 __all__ = ["TABS", "MainWindow"]
 
@@ -72,6 +74,8 @@ class MainWindow(QMainWindow):
             :class:`ChartService` ohne Kursquelle (leere Charts).
         fundamentals_service: Liefert die Kennzahlen für den Kennzahlen-Tab; Standard
             ist ein :class:`FundamentalsService` ohne Datenbank (leere Kennzahlen).
+        strategy_service: Liefert die Strategien für den Strategien-Tab; Standard ist
+            ein :class:`StrategyService` für den Plugin-Ordner aus den Einstellungen.
         data_service: Datenupdate, Qualitätsbericht und Quellen für den Daten-Tab;
             Standard ist ein :class:`DataService` mit den Einstellungen von ``service``,
             der Änderungen nur im Speicher hält.
@@ -86,6 +90,7 @@ class MainWindow(QMainWindow):
         parent: QWidget | None = None,
         chart_service: ChartService | None = None,
         fundamentals_service: FundamentalsService | None = None,
+        strategy_service: StrategyService | None = None,
         data_service: DataService | None = None,
         scanner_service: ScannerService | None = None,
     ) -> None:
@@ -116,6 +121,18 @@ class MainWindow(QMainWindow):
         )
         self.fundamentals = FundamentalsWidget(self.fundamentals_service, runner=self.run_task)
         self.set_view("fundamentals", self.fundamentals)
+
+        self.strategy_service = (
+            strategy_service
+            if strategy_service is not None
+            else StrategyService(service.settings.plugins_path)
+        )
+        self.strategies = StrategiesWidget(
+            self.strategy_service, runner=self.run_task, load_on_show=True
+        )
+        self.strategies.open_in_backtest.connect(self.open_in_backtest)
+        self.set_view("strategies", self.strategies)
+        self.backtest_strategy: str | None = None
 
         self.data_service = (
             data_service if data_service is not None else DataService(service.settings)
@@ -302,6 +319,20 @@ class MainWindow(QMainWindow):
     def show_about(self) -> None:
         """Zeigt den Über-Dialog."""
         QMessageBox.about(self, texts.ABOUT_TITLE, texts.ABOUT_TEXT.format(version=__version__))
+
+    def open_in_backtest(self, strategy_id: str) -> None:
+        """Merkt sich ``strategy_id`` für den Backtest-Tab und wechselt dorthin.
+
+        Hat der Backtest-Tab eine Methode ``select_strategy``, wird sie aufgerufen.
+        """
+        self.backtest_strategy = strategy_id
+        backtest = self.tab_widget("backtest")
+        select = getattr(backtest, "select_strategy", None)
+        if callable(select):
+            select(strategy_id)
+        self.tabs.setCurrentWidget(backtest)
+        name = self.strategy_service.registry.info(strategy_id).name
+        self.statusBar().showMessage(texts.STRATEGIES_STATUS_BACKTEST.format(name=name))
 
     def _on_data_changed(self, _result: object) -> None:
         """Verwirft zwischengespeicherte Kurse und Kennzahlen nach Update oder Import."""
