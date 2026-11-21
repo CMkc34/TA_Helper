@@ -1,0 +1,9 @@
+# Spalten-Mapping für custom.csv
+[columns]
+Tag = "date"
+Wert = "symbol"
+Erster = "open"
+Max = "high"
+Min = "low"
+Letzter = "close"
+Stueck = "volume"
