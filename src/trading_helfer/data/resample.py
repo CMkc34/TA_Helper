@@ -258,6 +258,9 @@ def _keys_3d(
 
 def _aggregate(daily: pd.DataFrame, keys: np.ndarray[Any, Any]) -> pd.DataFrame:
     """Fasst Tageskurse je Schlüssel zusammen; ``_last_day`` = letzter vorhandener Tag."""
+    fast = _aggregate_sorted(daily, keys)
+    if fast is not None:
+        return fast
     grouped = daily.groupby(keys, sort=True)
     spec: dict[str, tuple[str, str]] = {
         "open": ("open", "first"),
@@ -272,3 +275,37 @@ def _aggregate(daily: pd.DataFrame, keys: np.ndarray[Any, Any]) -> pd.DataFrame:
     bars = grouped.agg(**spec)
     bars[VOLUME_COLUMN] = bars[VOLUME_COLUMN].astype("int64")
     return bars
+
+
+def _aggregate_sorted(daily: pd.DataFrame, keys: np.ndarray[Any, Any]) -> pd.DataFrame | None:
+    """Schneller Weg für aufsteigende Schlüssel ohne fehlende Werte (Normalfall).
+
+    Liefert dasselbe wie die ``groupby``-Aggregation oder ``None``, wenn die Voraussetzungen
+    nicht erfüllt sind.
+    """
+    n = len(keys)
+    if n == 0 or len(daily) != n:
+        return None
+    if n > 1 and not bool(np.all(keys[1:] >= keys[:-1])):
+        return None
+    float_columns = ["open", "high", "low", "close"]
+    if ADJ_CLOSE_COLUMN in daily.columns:
+        float_columns.append(ADJ_CLOSE_COLUMN)
+    values = {c: daily[c].to_numpy(dtype="float64") for c in float_columns}
+    if any(np.isnan(v).any() for v in values.values()):
+        return None
+    starts = np.flatnonzero(np.r_[True, keys[1:] != keys[:-1]])
+    ends = np.r_[starts[1:] - 1, n - 1]
+    dates = daily[DATE_COLUMN].to_numpy(dtype="datetime64[ns]")
+    volume = daily[VOLUME_COLUMN].to_numpy(dtype="int64")
+    data: dict[str, Any] = {
+        "open": values["open"][starts],
+        "high": np.maximum.reduceat(values["high"], starts),
+        "low": np.minimum.reduceat(values["low"], starts),
+        "close": values["close"][ends],
+        VOLUME_COLUMN: np.add.reduceat(volume, starts),
+        "_last_day": dates[ends],
+    }
+    if ADJ_CLOSE_COLUMN in values:
+        data[ADJ_CLOSE_COLUMN] = values[ADJ_CLOSE_COLUMN][ends]
+    return pd.DataFrame(data, index=pd.Index(keys[starts]))

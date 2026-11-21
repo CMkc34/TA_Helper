@@ -55,6 +55,9 @@ def build_parser() -> argparse.ArgumentParser:
     import_csv.add_argument(
         "--db", type=Path, metavar="datei.duckdb", help="Datenbank (Standard: aus Einstellungen)"
     )
+    from trading_helfer.scanner.cli import add_scan_parser
+
+    add_scan_parser(commands)
     return parser
 
 
@@ -100,6 +103,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_quality(args.symbols, db_path=args.db, csv_path=args.csv)
     if args.command == "import-csv":
         return _run_import_csv(args)
+    if args.command == "scan":
+        from trading_helfer.scanner.cli import run_scan
+
+        return run_scan(args)
     return 0  # pragma: no cover - weitere Unterbefehle folgen in späteren Issues
 
 
