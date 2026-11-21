@@ -1,0 +1,11 @@
+{
+  "expirations": [
+    "2027-01-15",
+    "2026-12-18"
+  ],
+  "underlying": {
+    "regularMarketPrice": 100.0,
+    "previousClose": 99.5,
+    "currency": "USD"
+  }
+}

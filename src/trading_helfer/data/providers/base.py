@@ -1,11 +1,11 @@
 """Schnittstellen der Datenquellen (Provider) und gemeinsame Hilfen.
 
-Die Protokolle :class:`PriceProvider`, :class:`FundamentalsProvider` und
-:class:`InstrumentProvider` beschreiben, was eine Datenquelle liefern muss
-(siehe ``docs/SPEC.md``, Abschnitt „Module im Detail › Daten-Provider“). Fehler einer
-Quelle (Netzwerk, Rate-Limit, unerwartete Antwort) meldet jeder Provider einheitlich
-als :class:`ProviderError`. Ein unbekanntes Symbol ist kein Fehler, sondern ergibt ein
-leeres Ergebnis.
+Die Protokolle :class:`PriceProvider`, :class:`FundamentalsProvider`,
+:class:`InstrumentProvider` und :class:`OptionChainProvider` beschreiben, was eine
+Datenquelle liefern muss (siehe ``docs/SPEC.md``, Abschnitt „Module im Detail ›
+Daten-Provider“). Fehler einer Quelle (Netzwerk, Rate-Limit, unerwartete Antwort) meldet
+jeder Provider einheitlich als :class:`ProviderError`. Ein unbekanntes Symbol ist kein
+Fehler, sondern ergibt ein leeres Ergebnis.
 """
 
 from __future__ import annotations
@@ -20,13 +20,17 @@ import pandas as pd
 __all__ = [
     "ACTION_COLUMNS",
     "FUNDAMENTALS_COLUMNS",
+    "OPTION_CHAIN_COLUMNS",
+    "OPTION_TYPES",
     "ActionType",
     "FundamentalsProvider",
     "InstrumentInfo",
     "InstrumentProvider",
+    "OptionChainProvider",
     "PriceProvider",
     "ProviderError",
     "empty_actions",
+    "empty_option_chain",
 ]
 
 ACTION_COLUMNS: Final[tuple[str, ...]] = ("date", "type", "value")
@@ -40,6 +44,25 @@ FUNDAMENTALS_COLUMNS: Final[tuple[str, ...]] = (
     "reported_date",
 )
 """Spalten der Fundamentaldaten im Langformat."""
+
+OPTION_CHAIN_COLUMNS: Final[tuple[str, ...]] = (
+    "expiry",
+    "strike",
+    "type",
+    "bid",
+    "ask",
+    "last",
+    "volume",
+    "open_interest",
+    "iv",
+    "underlying_price",
+)
+"""Spalten einer Optionskette: Verfall, Basispreis, ``CALL``/``PUT``, Kurse, Umsatz,
+offene Kontrakte, implizite Volatilität (Dezimalzahl, 0.25 = 25 %) und Kurs des
+Basiswerts zum Abrufzeitpunkt."""
+
+OPTION_TYPES: Final = frozenset({"CALL", "PUT"})
+"""Erlaubte Werte der Spalte ``type`` einer Optionskette."""
 
 
 class ActionType(StrEnum):
@@ -140,6 +163,47 @@ class InstrumentProvider(Protocol):
             ProviderError: Die Quelle war nicht erreichbar oder antwortete fehlerhaft.
         """
         ...
+
+
+@runtime_checkable
+class OptionChainProvider(Protocol):
+    """Quelle für aktuelle Optionsketten (ohne Historie)."""
+
+    name: str
+
+    def fetch_option_chain(self, symbol: str, max_expiries: int | None = None) -> pd.DataFrame:
+        """Aktuelle Optionskette des Symbols über alle (oder die nächsten) Verfallstage.
+
+        Args:
+            symbol: Symbol in App-Schreibweise.
+            max_expiries: Nur die nächsten ``n`` Verfallstage; ``None`` = alle.
+
+        Returns:
+            Spalten :data:`OPTION_CHAIN_COLUMNS`; leer, wenn es keine Optionen gibt.
+
+        Raises:
+            ProviderError: Die Quelle war nicht erreichbar oder antwortete fehlerhaft.
+        """
+        ...
+
+
+def empty_option_chain() -> pd.DataFrame:
+    """Leere Optionskette mit den richtigen Datentypen."""
+    return pd.DataFrame(
+        {
+            "expiry": pd.Series(dtype="datetime64[ns]"),
+            "strike": pd.Series(dtype="float64"),
+            "type": pd.Series(dtype="object"),
+            "bid": pd.Series(dtype="float64"),
+            "ask": pd.Series(dtype="float64"),
+            "last": pd.Series(dtype="float64"),
+            "volume": pd.Series(dtype="Int64"),
+            "open_interest": pd.Series(dtype="Int64"),
+            "iv": pd.Series(dtype="float64"),
+            "underlying_price": pd.Series(dtype="float64"),
+        },
+        index=pd.RangeIndex(0),
+    )
 
 
 def empty_actions() -> pd.DataFrame:

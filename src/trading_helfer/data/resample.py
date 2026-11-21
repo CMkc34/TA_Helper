@@ -101,16 +101,15 @@ def resample(df_daily: pd.DataFrame, timeframe: Timeframe) -> pd.DataFrame:
         return daily
 
     dates = pd.DatetimeIndex(daily[DATE_COLUMN])
-    years = _session_years(dates[0], dates[-1])
-    sessions = _calendar_sessions(*years)
-    session_keys, period_end = _period_ends(timeframe, *years)
+    start_year, end_year = _calendar_years(dates[0], dates[-1])
+    sessions = _calendar_sessions(start_year, end_year)
+    session_keys, period_end = _periods(timeframe, start_year, end_year)
     if timeframe is Timeframe.W1:
         day_keys = _week_keys(dates)
     elif timeframe is Timeframe.MN1:
         day_keys = _month_keys(dates)
     else:
-        day_keys = _keys_3d(dates, sessions)[0]
-
+        day_keys, _ = _keys_3d(dates, sessions)
     bars = _aggregate(daily, day_keys)
     ends = period_end.reindex(bars.index)
     last_date = dates[-1]
@@ -207,7 +206,7 @@ def _data_key(df_daily: pd.DataFrame) -> tuple[Any, ...]:
     return (dates.max(), dates.min(), len(df_daily))
 
 
-def _session_years(first: pd.Timestamp, last: pd.Timestamp) -> tuple[int, int]:
+def _calendar_years(first: pd.Timestamp, last: pd.Timestamp) -> tuple[int, int]:
     """Kalenderjahre, die die Daten, den 3D-Anker und alle betroffenen Zeiträume abdecken."""
     start = min(first, _CALENDAR_START)
     end = max(last, ANCHOR_3D) + _CALENDAR_MARGIN
@@ -215,6 +214,22 @@ def _session_years(first: pd.Timestamp, last: pd.Timestamp) -> tuple[int, int]:
     # selten neu aufgebaut wird.
     end_year = -(-end.year // _CALENDAR_YEAR_STEP) * _CALENDAR_YEAR_STEP
     return start.year, end_year
+
+
+@lru_cache(maxsize=16)
+def _periods(
+    timeframe: Timeframe, start_year: int, end_year: int
+) -> tuple[np.ndarray[Any, Any], pd.Series]:
+    """Schlüssel je Handelstag und letzter Handelstag je Zeitraum (zwischengespeichert)."""
+    sessions = _calendar_sessions(start_year, end_year)
+    if timeframe is Timeframe.W1:
+        session_keys = _week_keys(sessions)
+    elif timeframe is Timeframe.MN1:
+        session_keys = _month_keys(sessions)
+    else:
+        _, session_keys = _keys_3d(sessions[:0], sessions)
+    period_end = pd.Series(sessions, index=session_keys).groupby(level=0).max()
+    return session_keys, period_end
 
 
 @lru_cache(maxsize=8)
@@ -230,22 +245,6 @@ def _calendar_sessions(start_year: int, end_year: int) -> pd.DatetimeIndex:
         )
     sessions = pd.DatetimeIndex(calendar.sessions).tz_localize(None)
     return pd.DatetimeIndex(sessions.as_unit("ns"))
-
-
-@lru_cache(maxsize=16)
-def _period_ends(
-    timeframe: Timeframe, start_year: int, end_year: int
-) -> tuple[np.ndarray[Any, Any], pd.Series]:
-    """Schlüssel je Handelstag und letzter Handelstag je Zeitraum (zwischengespeichert)."""
-    sessions = _calendar_sessions(start_year, end_year)
-    if timeframe is Timeframe.W1:
-        session_keys = _week_keys(sessions)
-    elif timeframe is Timeframe.MN1:
-        session_keys = _month_keys(sessions)
-    else:
-        session_keys = _keys_3d(sessions[:1], sessions)[1]
-    period_end = pd.Series(sessions, index=session_keys).groupby(level=0).max()
-    return session_keys, period_end
 
 
 def _week_keys(dates: pd.DatetimeIndex) -> np.ndarray[Any, Any]:
@@ -272,6 +271,9 @@ def _keys_3d(
 
 def _aggregate(daily: pd.DataFrame, keys: np.ndarray[Any, Any]) -> pd.DataFrame:
     """Fasst Tageskurse je Schlüssel zusammen; ``_last_day`` = letzter vorhandener Tag."""
+    fast = _aggregate_sorted(daily, keys)
+    if fast is not None:
+        return fast
     grouped = daily.groupby(keys, sort=True)
     spec: dict[str, tuple[str, str]] = {
         "open": ("open", "first"),
@@ -286,3 +288,37 @@ def _aggregate(daily: pd.DataFrame, keys: np.ndarray[Any, Any]) -> pd.DataFrame:
     bars = grouped.agg(**spec)
     bars[VOLUME_COLUMN] = bars[VOLUME_COLUMN].astype("int64")
     return bars
+
+
+def _aggregate_sorted(daily: pd.DataFrame, keys: np.ndarray[Any, Any]) -> pd.DataFrame | None:
+    """Schneller Weg für aufsteigende Schlüssel ohne fehlende Werte (Normalfall).
+
+    Liefert dasselbe wie die ``groupby``-Aggregation oder ``None``, wenn die Voraussetzungen
+    nicht erfüllt sind.
+    """
+    n = len(keys)
+    if n == 0 or len(daily) != n:
+        return None
+    if n > 1 and not bool(np.all(keys[1:] >= keys[:-1])):
+        return None
+    float_columns = ["open", "high", "low", "close"]
+    if ADJ_CLOSE_COLUMN in daily.columns:
+        float_columns.append(ADJ_CLOSE_COLUMN)
+    values = {c: daily[c].to_numpy(dtype="float64") for c in float_columns}
+    if any(np.isnan(v).any() for v in values.values()):
+        return None
+    starts = np.flatnonzero(np.r_[True, keys[1:] != keys[:-1]])
+    ends = np.r_[starts[1:] - 1, n - 1]
+    dates = daily[DATE_COLUMN].to_numpy(dtype="datetime64[ns]")
+    volume = daily[VOLUME_COLUMN].to_numpy(dtype="int64")
+    data: dict[str, Any] = {
+        "open": values["open"][starts],
+        "high": np.maximum.reduceat(values["high"], starts),
+        "low": np.minimum.reduceat(values["low"], starts),
+        "close": values["close"][ends],
+        VOLUME_COLUMN: np.add.reduceat(volume, starts),
+        "_last_day": dates[ends],
+    }
+    if ADJ_CLOSE_COLUMN in values:
+        data[ADJ_CLOSE_COLUMN] = values[ADJ_CLOSE_COLUMN][ends]
+    return pd.DataFrame(data, index=pd.Index(keys[starts]))

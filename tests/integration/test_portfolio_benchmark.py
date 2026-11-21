@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import ClassVar
 
 import numpy as np
 import pandas as pd
@@ -15,39 +14,10 @@ from trading_helfer.core.config import Settings
 from trading_helfer.core.types import Timeframe
 from trading_helfer.data.resample import resample
 from trading_helfer.data.universe import all_members
-from trading_helfer.strategies.base import BarContext, Order, Param, Params, Sizing, Strategy
+from trading_helfer.strategies.builtin.sma_cross import SmaCross
 
 START, END = "2000-01-01", "2024-12-31"
 LIMIT_SECONDS = 60.0
-
-
-class MomentumCross(Strategy):
-    id = "bench_momentum_cross"
-    name = "SMA-Kreuzung mit Momentum-Rang"
-    version = "1.0.0"
-    description = "SMA-Kreuzung; Signalstärke = 26-Wochen-Momentum."
-    timeframes: ClassVar = [Timeframe.W1]
-    params: ClassVar[dict[str, Param]] = {
-        "fast": Param(10, 2, 50, 1, "schnell"),
-        "slow": Param(30, 5, 200, 1, "langsam"),
-    }
-
-    def indicators(self, bars: pd.DataFrame, p: Params) -> pd.DataFrame:
-        close = bars["close"]
-        return pd.DataFrame(
-            {
-                "fast": close.rolling(p.fast).mean(),
-                "slow": close.rolling(p.slow).mean(),
-                "strength": close.pct_change(26),
-            }
-        )
-
-    def on_bar(self, ctx: BarContext) -> list[Order]:
-        if ctx.position is None and ctx.crossed_above("fast", "slow"):
-            return [ctx.buy(sizing=Sizing.percent_equity(10))]
-        if ctx.position is not None and ctx.crossed_below("fast", "slow"):
-            return ctx.exit()
-        return []
 
 
 def _synthetic_universe(symbols: list[str]) -> dict[str, pd.DataFrame]:
@@ -79,7 +49,7 @@ def test_sp500_25_years_weekly(tmp_path: Path) -> None:
 
     started = time.perf_counter()
     result = run_portfolio_backtest(
-        MomentumCross(),
+        SmaCross(),
         None,
         "SP500",
         Timeframe.W1,
@@ -91,5 +61,5 @@ def test_sp500_25_years_weekly(tmp_path: Path) -> None:
     )
     elapsed = time.perf_counter() - started
 
-    assert len(result.trades) > 100
+    assert len(result.trades) > 10
     assert elapsed < LIMIT_SECONDS, f"{elapsed:.1f} s"

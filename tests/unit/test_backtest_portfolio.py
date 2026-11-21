@@ -399,27 +399,62 @@ def test_result_shape_and_determinism(settings: Settings) -> None:
     assert c.fingerprint() != a.fingerprint()
 
 
+def _walks(n: int = 600) -> dict[str, pd.DataFrame]:
+    rng = np.random.default_rng(11)
+    return {
+        sym: _bars(100.0 * np.exp(np.cumsum(rng.normal(0.0005, 0.02, n))))
+        for sym in ("AAA", "BBB", "CCC", "DDD")
+    }
+
+
+def _sma_run(settings: Settings, workers: int) -> PortfolioResult:
+    from trading_helfer.strategies.builtin.sma_cross import SmaCross
+
+    return _run(
+        settings,
+        _walks(),
+        universe=["AAA", "BBB", "CCC", "DDD"],
+        strategy=SmaCross,
+        params={"fast": 5, "slow": 10},
+        timeframe=Timeframe.W1,
+        max_positions=2,
+        workers=workers,
+    )
+
+
 def test_process_pool_matches_serial(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    from trading_helfer.strategies.builtin.sma_cross import SmaCross
+
     monkeypatch.setattr(portfolio_module, "_PROCESS_MIN_SYMBOLS", 2)
-    serial = _run(settings, _three(), params={"hold": 4}, max_positions=2, workers=1)
-    parallel = _run(settings, _three(), params={"hold": 4}, max_positions=2, workers=2)
+    assert portfolio_module._process_safe(SmaCross())
+    serial = _sma_run(settings, workers=1)
+    parallel = _sma_run(settings, workers=2)
+    assert len(serial.trades) > 0
     assert serial.fingerprint() == parallel.fingerprint()
 
 
-def test_unpicklable_strategy_uses_threads(
-    settings: Settings, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(portfolio_module, "_PROCESS_MIN_SYMBOLS", 2)
-
+def test_process_safe_rejects_unimportable_strategies() -> None:
     class Local(HoldRanked):  # lokale Klasse lässt sich nicht pickeln
         pass
 
-    result = _run(settings, _three(), strategy=Local(), max_positions=2, workers=2)
-    assert len(result.open_positions) == 2
+    main_cls = type("MainStrat", (HoldRanked,), {"__module__": "__main__"})
+    missing_cls = type("Missing", (HoldRanked,), {"__module__": "gibt_es_nicht.modul"})
+    assert not portfolio_module._process_safe(Local())
+    assert not portfolio_module._process_safe(main_cls())
+    assert not portfolio_module._process_safe(missing_cls())
+
+
+def test_unimportable_strategy_uses_threads(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(portfolio_module, "_PROCESS_MIN_SYMBOLS", 2)
+    threaded = _run(settings, _three(), params={"hold": 4}, max_positions=2, workers=2)
+    serial = _run(settings, _three(), params={"hold": 4}, max_positions=2, workers=1)
+    assert threaded.fingerprint() == serial.fingerprint()
 
 
 def test_broken_process_pool_falls_back(
-    settings: Settings, monkeypatch: pytest.MonkeyPatch
+    settings: Settings, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     from concurrent.futures.process import BrokenProcessPool
 
@@ -429,8 +464,9 @@ def test_broken_process_pool_falls_back(
 
     monkeypatch.setattr(portfolio_module, "_PROCESS_MIN_SYMBOLS", 2)
     monkeypatch.setattr(portfolio_module, "ProcessPoolExecutor", Broken)
-    result = _run(settings, _three(), max_positions=2, workers=2)
-    assert any("Prozess-Pool" in line for line in result.log)
+    result = _sma_run(settings, workers=2)
+    assert "Prozess-Pool" in caplog.text
+    assert result.fingerprint() == _sma_run(settings, workers=1).fingerprint()
 
 
 def test_strategy_state_is_per_symbol(settings: Settings) -> None:

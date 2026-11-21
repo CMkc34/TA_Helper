@@ -214,7 +214,9 @@ class _OpenPosition:
         return 1.0 if self.side is Side.LONG else -1.0
 
     def to_position(self) -> Position:
-        return Position(self.symbol, self.side, self.qty, self.entry_price, self.entry_date)
+        return Position(
+            self.symbol, self.side, float(self.qty), float(self.entry_price), self.entry_date
+        )
 
 
 @dataclass

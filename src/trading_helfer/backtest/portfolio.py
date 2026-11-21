@@ -44,6 +44,8 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import importlib.util
+import logging
 import math
 import os
 import pickle
@@ -109,6 +111,8 @@ STRENGTH_COLUMN: Final = "strength"
 
 DELISTING_REASON: Final = "Delisting"
 """``exit_reason`` von Positionen, die wegen Ende der Kurshistorie geschlossen wurden."""
+
+logger = logging.getLogger(__name__)
 
 _PROCESS_MIN_SYMBOLS: Final = 64
 """Ab dieser Anzahl Werte lohnt sich die Vorberechnung in Prozessen."""
@@ -224,7 +228,7 @@ def run_portfolio_backtest(
     if not daily:
         raise BacktestError(f"Keine Kurse für das Universum {name} bis {end_day}.")
 
-    prepared = _prepare_all(template, p, daily, timeframe, start_day, workers, log)
+    prepared = _prepare_all(template, p, daily, timeframe, start_day, workers)
     data = [d for d in prepared if d is not None]
     skipped = sorted(set(daily) - {d.symbol for d in data})
     if skipped:
@@ -337,13 +341,13 @@ def _prepare_all(
     timeframe: Timeframe,
     start: Date,
     workers: int | None,
-    log: list[str],
 ) -> list[_SymbolData | None]:
     """Bereitet alle Werte vor: in Prozessen, wenn möglich, sonst in Threads.
 
     Prozesse umgehen die GIL; sie setzen voraus, dass sich die Strategie mit
-    :mod:`pickle` übertragen lässt. Sonst (z. B. dynamisch geladene Plugins) und bei
-    wenigen Werten laufen Threads.
+    :mod:`pickle` übertragen lässt und ihr Modul in einem neuen Prozess importierbar ist
+    (Windows startet Prozesse neu). Sonst (z. B. dynamisch geladene Plugins) und bei
+    wenigen Werten laufen Threads. Der Weg ändert das Ergebnis nicht.
     """
     symbols = sorted(daily)
     values = params.to_dict()  # Params selbst lässt sich nicht pickeln
@@ -351,20 +355,26 @@ def _prepare_all(
     count = workers if workers is not None else (os.cpu_count() or 1)
     if count <= 1:
         return [_prepare_job(job) for job in jobs]
-    if len(jobs) >= _PROCESS_MIN_SYMBOLS and _picklable(template):
+    if len(jobs) >= _PROCESS_MIN_SYMBOLS and _process_safe(template):
         chunk = max(1, len(jobs) // (count * 4))
         try:
             with ProcessPoolExecutor(max_workers=count) as pool:
                 return list(pool.map(_prepare_job, jobs, chunksize=chunk))
         except (BrokenProcessPool, ImportError, AttributeError, pickle.PicklingError):
-            log.append("Prozess-Pool nicht verfügbar; Vorberechnung in Threads.")
+            logger.warning("Prozess-Pool nicht verfügbar; Vorberechnung in Threads.")
     with ThreadPoolExecutor(max_workers=count) as pool:
         return list(pool.map(_prepare_job, jobs))
 
 
-def _picklable(*objects: object) -> bool:
+def _process_safe(template: Strategy) -> bool:
+    """``True``, wenn die Strategie in einem frisch gestarteten Prozess ladbar ist."""
+    module = type(template).__module__
+    if module == "__main__":
+        return False
     try:
-        pickle.dumps(objects)
+        if importlib.util.find_spec(module) is None:
+            return False
+        pickle.dumps(template)
     except Exception:
         return False
     return True
