@@ -21,9 +21,11 @@ from PySide6.QtWidgets import (
 from trading_helfer import __version__
 from trading_helfer.gui import texts
 from trading_helfer.gui.theme import apply_theme
+from trading_helfer.gui.widgets.chart import ChartWidget
 from trading_helfer.gui.widgets.watchlist import WatchlistWidget
 from trading_helfer.gui.worker import Worker, WorkerError
 from trading_helfer.services.app_service import AppService, ThemeName
+from trading_helfer.services.chart_service import ChartService
 
 __all__ = ["TABS", "MainWindow"]
 
@@ -57,6 +59,8 @@ class MainWindow(QMainWindow):
     Args:
         service: Fassade zur Logik; liefert Einstellungen und speichert den GUI-Zustand.
         thread_pool: Pool für Hintergrundaufgaben; Standard ist der globale Pool.
+        chart_service: Liefert die Kerzen für den Chart-Tab; Standard ist ein
+            :class:`ChartService` ohne Kursspeicher (leere Charts).
     """
 
     def __init__(
@@ -64,6 +68,7 @@ class MainWindow(QMainWindow):
         service: AppService,
         thread_pool: QThreadPool | None = None,
         parent: QWidget | None = None,
+        chart_service: ChartService | None = None,
     ) -> None:
         super().__init__(parent)
         self.service = service
@@ -79,6 +84,10 @@ class MainWindow(QMainWindow):
             self._tab_keys.append(key)
             self.tabs.addTab(self._placeholder(title), title)
         self.setCentralWidget(self.tabs)
+
+        self.chart_service = chart_service if chart_service is not None else ChartService()
+        self.chart = ChartWidget(self.chart_service, runner=self.run_task)
+        self.set_view("chart", self.chart)
 
         self.watchlist = WatchlistWidget(service)
         self.watchlist.symbol_selected.connect(self._on_symbol_selected)
@@ -236,3 +245,5 @@ class MainWindow(QMainWindow):
 
     def _on_symbol_selected(self, symbol: str) -> None:
         self.statusBar().showMessage(texts.STATUS_SYMBOL.format(symbol=symbol))
+        self.tabs.setCurrentWidget(self.chart)
+        self.chart.load_symbol(symbol)
