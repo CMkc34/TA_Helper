@@ -139,7 +139,6 @@ class StrategiesWidget(QWidget):
         toolbar.addWidget(self.reload_button)
         toolbar.addWidget(self.backtest_button)
         toolbar.addStretch(1)
-        toolbar.addWidget(self.summary_label)
 
         self.table = _readonly_table(COLUMNS)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
@@ -150,7 +149,10 @@ class StrategiesWidget(QWidget):
         header_font.setBold(True)
         header_font.setPointSizeF(header_font.pointSizeF() * 1.2)
         self.header_label.setFont(header_font)
+        # Lange Texte umbrechen, damit der Tab die Mindestbreite des Fensters nicht erhöht.
+        self.header_label.setWordWrap(True)
         self.meta_label = QLabel()
+        self.meta_label.setWordWrap(True)
         self.description_label = QLabel()
         self.description_label.setWordWrap(True)
         self.description_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -158,6 +160,7 @@ class StrategiesWidget(QWidget):
         self.params_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.no_params_label = QLabel(texts.STRATEGIES_NO_PARAMS)
         self.file_label = QLabel()
+        self.file_label.setWordWrap(True)
         self.file_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.error_view = QPlainTextEdit()
         self.error_view.setReadOnly(True)
@@ -173,8 +176,15 @@ class StrategiesWidget(QWidget):
         detail_layout.addWidget(self.error_view, 1)
         detail_layout.addWidget(self.file_label)
 
+        # Anzahl unter der Liste statt in der Knopfleiste: hält die Mindestbreite klein.
+        listing = QWidget()
+        list_layout = QVBoxLayout(listing)
+        list_layout.setContentsMargins(0, 0, 0, 0)
+        list_layout.addWidget(self.table, 1)
+        list_layout.addWidget(self.summary_label)
+
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self.table)
+        splitter.addWidget(listing)
         splitter.addWidget(details)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
@@ -254,8 +264,9 @@ class StrategiesWidget(QWidget):
                     item.setToolTip(row.message)
                 self.table.setItem(index, column, item)
         loaded = sum(1 for r in rows if r.ok)
-        self.summary_label.setText(
-            texts.STRATEGIES_SUMMARY.format(count=loaded, folder=self._service.plugins_dir)
+        self.summary_label.setText(texts.STRATEGIES_SUMMARY.format(count=loaded))
+        self.summary_label.setToolTip(
+            texts.STRATEGIES_SUMMARY_TOOLTIP.format(folder=self._service.plugins_dir)
         )
         target = self._pending_select
         self._pending_select = None

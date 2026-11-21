@@ -342,3 +342,15 @@ def test_main_window_calls_select_strategy_of_backtest_tab(
     qtbot.waitUntil(lambda: len(win.strategies.rows()) >= 3)
     win.open_in_backtest("mr_rsi2_trend")
     assert fake.selected == ["mr_rsi2_trend"]
+
+
+def test_tab_does_not_widen_main_window(
+    qtbot: QtBot, service: AppService, dialogs: list[tuple[str, str]]
+) -> None:
+    """Der Tab darf die Mindestbreite des Fensters nicht über die des Chart-Tabs heben."""
+    win = MainWindow(service)
+    qtbot.addWidget(win)
+    win.strategies.refresh()
+    qtbot.waitUntil(lambda: len(win.strategies.rows()) >= 3)
+    win.strategies.select("trend_sma_cross")
+    assert win.strategies.minimumSizeHint().width() <= win.chart.minimumSizeHint().width()
