@@ -56,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     update.add_argument(
         "--db", type=Path, default=None, help="DuckDB-Datei (Standard: aus den Einstellungen)"
-
+    )
     import_csv = commands.add_parser(
         "import-csv",
         help="Tageskurse aus CSV-Dateien (z. B. Kaggle) importieren",
