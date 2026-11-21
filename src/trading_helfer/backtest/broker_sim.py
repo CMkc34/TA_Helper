@@ -394,6 +394,31 @@ class SimBroker:
         self._pending = [p for p in self._pending if symbol is not None and p.symbol != symbol]
         return before - len(self._pending)
 
+    def force_close(self, symbol: str, day: Date, price: float, reason: str) -> Fill | None:
+        """Schließt eine Position sofort zum angegebenen Kurs (z. B. Delisting).
+
+        Ohne Slippage, mit der normalen Gebühr. Alle offenen Orders des Symbols werden
+        gestrichen.
+
+        Args:
+            symbol: Wertpapier.
+            day: Datum der Schließung.
+            price: Ausführungskurs (z. B. letzter Close).
+            reason: Text für ``exit_reason`` und ``tag``.
+
+        Returns:
+            Die Ausführung oder ``None``, wenn keine Position offen war.
+        """
+        self.cancel(symbol)
+        pos = self._positions.get(symbol)
+        if pos is None:
+            return None
+        side = OrderSide.SELL if pos.side is Side.LONG else OrderSide.BUY_TO_COVER
+        pending = PendingOrder(self._next_id, Order(symbol, side, tag=reason), day)
+        self._next_id += 1
+        self._last_price[symbol] = price
+        return self._close(pending, pos, day, price)
+
     # -- Kerze verarbeiten --------------------------------------------------
 
     def process_bar(self, symbol: str, bar: Bar, *, atr: float | None = None) -> list[Fill]:
