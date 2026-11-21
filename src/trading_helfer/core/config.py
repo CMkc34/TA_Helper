@@ -58,6 +58,7 @@ ENV_PREFIX: Final = "TH_"
 CONFIG_FILE_NAME: Final = "config.toml"
 DB_FILE_NAME: Final = "market.duckdb"
 LOG_DIR_NAME: Final = "logs"
+PLUGINS_DIR_NAME: Final = "plugins"
 DEFAULT_PROVIDERS: Final = ("yfinance", "tiingo")
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -90,7 +91,7 @@ def default_config_path() -> Path:
 class Settings(BaseSettings):
     """Geprüfte Einstellungen der App.
 
-    ``db_path`` und ``log_dir`` werden aus ``data_dir`` abgeleitet, wenn sie nicht
+    ``db_path``, ``log_dir`` und ``plugins_dir`` werden aus ``data_dir`` abgeleitet, wenn sie nicht
     ausdrücklich gesetzt sind.
     """
 
@@ -108,6 +109,9 @@ class Settings(BaseSettings):
         default=None, description="DuckDB-Datei; Standard: data_dir/market.duckdb"
     )
     log_dir: Path | None = Field(default=None, description="Log-Ordner; Standard: data_dir/logs")
+    plugins_dir: Path | None = Field(
+        default=None, description="Ordner für Strategie-Plugins; Standard: data_dir/plugins"
+    )
     log_level: LogLevel = Field(default="INFO", description="Mindest-Level für Logausgaben")
     start_date: date = Field(default=date(1990, 1, 1), description="Frühestes Kursdatum")
     default_capital: float = Field(default=1000.0, gt=0, description="Startkapital in USD")
@@ -136,7 +140,7 @@ class Settings(BaseSettings):
             sources.append(TomlConfigSettingsSource(settings_cls, toml_file=config_file))
         return tuple(sources)
 
-    @field_validator("data_dir", "db_path", "log_dir", mode="after")
+    @field_validator("data_dir", "db_path", "log_dir", "plugins_dir", mode="after")
     @classmethod
     def _expand_user(cls, value: Path | None) -> Path | None:
         return value.expanduser() if value is not None else None
@@ -184,6 +188,8 @@ class Settings(BaseSettings):
             object.__setattr__(self, "db_path", self.data_dir / DB_FILE_NAME)
         if self.log_dir is None:
             object.__setattr__(self, "log_dir", self.data_dir / LOG_DIR_NAME)
+        if self.plugins_dir is None:
+            object.__setattr__(self, "plugins_dir", self.data_dir / PLUGINS_DIR_NAME)
         return self
 
     @property
@@ -197,6 +203,12 @@ class Settings(BaseSettings):
         """Pfad des Log-Ordners (immer gesetzt)."""
         assert self.log_dir is not None
         return self.log_dir
+
+    @property
+    def plugins_path(self) -> Path:
+        """Pfad des Plugin-Ordners für Strategien (immer gesetzt)."""
+        assert self.plugins_dir is not None
+        return self.plugins_dir
 
     def secret_values(self) -> list[str]:
         """Gibt alle gesetzten Geheimnisse im Klartext zurück (für die Log-Maskierung)."""
