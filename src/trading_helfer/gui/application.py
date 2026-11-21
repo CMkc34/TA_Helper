@@ -19,6 +19,7 @@ from trading_helfer.services.app_service import AppService
 from trading_helfer.services.chart_service import ChartService, store_loader
 from trading_helfer.services.data_service import DataService
 from trading_helfer.services.fundamentals_service import FundamentalsService
+from trading_helfer.services.scanner_service import ScannerService
 
 __all__ = ["get_application", "install_exception_hook", "run_gui"]
 
@@ -96,6 +97,7 @@ def run_gui(
         chart_service=chart_service,
         fundamentals_service=fundamentals_service,
         data_service=data_service,
+        scanner_service=ScannerService(settings),
     )
     previous_hook = install_exception_hook(window)
     try:
