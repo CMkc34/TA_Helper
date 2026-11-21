@@ -16,3 +16,8 @@ Symbol `SYNTH`: steigender Trend, Split 4:1 am 2024-01-08, Dividende 0,25 USD am
   `ShareIssued`, Kasse 2024-03 nur als `CashCashEquivalentsAndShortTermInvestments`),
   ein nicht abgebildeter Posten (`ResearchAndDevelopment`) und Metriken, die ganz
   fehlen (`ebitda` im Quartal, `inventory` im Quartal, `dividends_paid` im Quartal).
+- `SYNTH_options.json`: `Ticker.options` (Verfallstage, absichtlich unsortiert) und
+  `option_chain(...).underlying` (Auszug).
+- `SYNTH_options_<verfall>_<calls|puts>.csv`: `Ticker.option_chain(<verfall>).calls`
+  bzw. `.puts`, Basiswert 100 USD, Basispreise 90–110; der Call 110 am 2026-12-18 hat
+  kein Volumen (leer, wie Yahoo es bei Kontrakten ohne Umsatz liefert).

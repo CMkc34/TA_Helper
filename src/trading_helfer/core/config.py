@@ -118,6 +118,9 @@ class Settings(BaseSettings):
     allow_fractional: bool = Field(default=True, description="Bruchstücke von Aktien erlauben")
     fee_per_order: float = Field(default=1.0, ge=0, description="Gebühr je Order in USD")
     slippage_pct: float = Field(default=0.05, ge=0, lt=100, description="Slippage in Prozent")
+    risk_free_rate_pct: float = Field(
+        default=0.0, gt=-100, lt=100, description="Risikofreier Zins p. a. in Prozent"
+    )
     tiingo_api_key: SecretStr | None = Field(default=None, description="API-Key für Tiingo")
     providers: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: list(DEFAULT_PROVIDERS),
@@ -228,6 +231,7 @@ def _default_file_values() -> dict[str, Any]:
         "allow_fractional": True,
         "fee_per_order": 1.0,
         "slippage_pct": 0.05,
+        "risk_free_rate_pct": 0.0,
         "providers": list(DEFAULT_PROVIDERS),
     }
 

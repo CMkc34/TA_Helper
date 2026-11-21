@@ -110,6 +110,7 @@ def test_missing_config_is_created_with_defaults(config_file: Path, isolated_env
         "allow_fractional": True,
         "fee_per_order": 1.0,
         "slippage_pct": 0.05,
+        "risk_free_rate_pct": 0.0,
         "providers": ["yfinance", "tiingo"],
     }
     assert s == Settings()
