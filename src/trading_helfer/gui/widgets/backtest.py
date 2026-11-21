@@ -275,6 +275,10 @@ class BacktestWidget(QWidget):
         group = QGroupBox(texts.BACKTEST_FORM_GROUP)
         form = QFormLayout(group)
         self.strategy_combo = QComboBox()
+        self.strategy_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.strategy_combo.setMinimumContentsLength(12)
         self.strategy_combo.currentIndexChanged.connect(self._on_strategy_changed)
         form.addRow(texts.BACKTEST_STRATEGY, self.strategy_combo)
         self.description_label = QLabel()
@@ -388,7 +392,7 @@ class BacktestWidget(QWidget):
         self.runs_table.cellDoubleClicked.connect(lambda row, _c: self.load_run(self._run_id(row)))
         layout.addWidget(self.runs_table)
 
-        buttons = QHBoxLayout()
+        buttons = QGridLayout()
         self.refresh_button = QPushButton(texts.BACKTEST_RUNS_REFRESH)
         self.refresh_button.clicked.connect(self.refresh_runs)
         self.load_button = QPushButton(texts.BACKTEST_RUNS_LOAD)
@@ -397,13 +401,10 @@ class BacktestWidget(QWidget):
         self.compare_button.clicked.connect(self._on_compare_clicked)
         self.delete_button = QPushButton(texts.BACKTEST_RUNS_DELETE)
         self.delete_button.clicked.connect(self._on_delete_clicked)
-        for button in (
-            self.refresh_button,
-            self.load_button,
-            self.compare_button,
-            self.delete_button,
+        for i, button in enumerate(
+            (self.refresh_button, self.load_button, self.compare_button, self.delete_button)
         ):
-            buttons.addWidget(button)
+            buttons.addWidget(button, i // 2, i % 2)
         layout.addLayout(buttons)
         return group
 
