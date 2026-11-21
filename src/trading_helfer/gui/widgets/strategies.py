@@ -137,7 +137,6 @@ class StrategiesWidget(QWidget):
         toolbar = QHBoxLayout()
         toolbar.addWidget(self.add_button)
         toolbar.addWidget(self.reload_button)
-        toolbar.addWidget(self.backtest_button)
         toolbar.addStretch(1)
 
         self.table = _readonly_table(COLUMNS)
@@ -175,6 +174,12 @@ class StrategiesWidget(QWidget):
         detail_layout.addWidget(self.no_params_label)
         detail_layout.addWidget(self.error_view, 1)
         detail_layout.addWidget(self.file_label)
+        # Knopf bei den Details (wirkt auf die gewählte Strategie) statt in der
+        # Knopfleiste: so bleibt die Mindestbreite des Tabs klein.
+        backtest_row = QHBoxLayout()
+        backtest_row.addStretch(1)
+        backtest_row.addWidget(self.backtest_button)
+        detail_layout.addLayout(backtest_row)
 
         # Anzahl unter der Liste statt in der Knopfleiste: hält die Mindestbreite klein.
         listing = QWidget()
