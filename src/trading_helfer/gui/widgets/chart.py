@@ -319,7 +319,7 @@ class ChartWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.addLayout(self._toolbar)
-        layout.addWidget(self.info_label)
+        layout.addLayout(self._info_row)
         layout.addWidget(self.graphics, 1)
 
         self.message_label.setText(texts.CHART_NO_SYMBOL)
@@ -372,9 +372,11 @@ class ChartWidget(QWidget):
         self.indicator_menu_button.setText(texts.INDICATOR_MENU_BUTTON)
         self.indicator_menu_button.setMenu(self.indicator_menu)
         self.indicator_menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self._toolbar.addSpacing(12)
-        self._toolbar.addWidget(self.add_indicator_button)
-        self._toolbar.addWidget(self.indicator_menu_button)
+        # Eigene Zeile neben der Kerzen-Info, damit die Mindestbreite nicht wächst.
+        self._info_row = QHBoxLayout()
+        self._info_row.addWidget(self.info_label, 1)
+        self._info_row.addWidget(self.add_indicator_button)
+        self._info_row.addWidget(self.indicator_menu_button)
 
     def _build_plots(self) -> None:
         self.graphics = pg.GraphicsLayoutWidget()
