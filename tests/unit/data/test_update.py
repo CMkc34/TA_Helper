@@ -660,3 +660,103 @@ def test_cli_update_recheck_reports_fallback_and_exclusions(
     out = capsys.readouterr()
     assert "Wegen Fremdkursen ausgeschlossen: GR" in out.out
     assert "ohne Ersatzquelle" in out.err
+
+
+class QuotaError(ProviderError):
+    def __init__(self, symbol: str, resume_at: dt.datetime | None) -> None:
+        super().__init__("tiingo", symbol, "Tiingo-Limit erreicht")
+        self.resume_at = resume_at
+
+
+class LimitedProvider(FakeProvider):
+    """Meldet die ersten ``blocked`` Anfragen ein erschöpftes Kontingent."""
+
+    def __init__(self, blocked: int, resume_at: dt.datetime | None) -> None:
+        super().__init__("tiingo", with_instrument=True)
+        self.blocked = blocked
+        self.resume_at = resume_at
+
+    def fetch_daily(self, symbol: str, start: dt.date, end: dt.date) -> pd.DataFrame:
+        if self.blocked > 0:
+            self.blocked -= 1
+            raise QuotaError(symbol, self.resume_at)
+        return super().fetch_daily(symbol, start, end)
+
+
+def test_wait_for_quota_sleeps_and_retries(store: MarketStore) -> None:
+    soon = dt.datetime.now(dt.UTC).replace(tzinfo=None) + dt.timedelta(minutes=10)
+    pauses: list[float] = []
+    provider = LimitedProvider(1, soon)
+    result = run(
+        store,
+        [FakeProvider(empty={"GONE"}), provider],
+        ["GONE"],
+        DAY1,
+        wait_for_quota=True,
+        sleep=pauses.append,
+    )
+    assert len(pauses) == 1
+    assert 600 <= pauses[0] <= 660
+    assert result.fallback_errors == {}
+    assert store.get_instrument("GONE")["source"] == "tiingo"  # type: ignore[index]
+    assert store.get_instrument("GONE")["name"] == "GONE Inc."  # type: ignore[index]
+
+
+def test_wait_for_quota_unknown_time_and_give_up(store: MarketStore) -> None:
+    pauses: list[float] = []
+    provider = LimitedProvider(10, None)
+    result = run(
+        store,
+        [FakeProvider(empty={"GONE"}), provider],
+        ["GONE"],
+        DAY1,
+        wait_for_quota=True,
+        sleep=pauses.append,
+    )
+    assert pauses == [3600.0] * update_module.QUOTA_WAIT_MAX_TRIES
+    assert "Tiingo-Limit" in result.fallback_errors["GONE"]
+
+
+def test_without_wait_quota_is_not_awaited(store: MarketStore) -> None:
+    pauses: list[float] = []
+    result = run(
+        store,
+        [FakeProvider(empty={"GONE"}), LimitedProvider(1, None)],
+        ["GONE"],
+        DAY1,
+        sleep=pauses.append,
+    )
+    assert pauses == []
+    assert "GONE" in result.fallback_errors
+
+
+def test_wait_does_not_retry_other_errors(store: MarketStore) -> None:
+    pauses: list[float] = []
+    result = run(
+        store,
+        [FakeProvider(failing={"BAD"})],
+        ["BAD"],
+        DAY1,
+        wait_for_quota=True,
+        sleep=pauses.append,
+    )
+    assert pauses == []
+    assert "BAD" in result.failed
+
+
+def test_cli_update_wait_flag(
+    settings_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from trading_helfer.app import main
+
+    seen: dict[str, Any] = {}
+
+    def fake_update(index_codes: list[str], progress_cb: Any = None, **kwargs: Any) -> Any:
+        seen.update(kwargs)
+        return UpdateResult(log_id=1, total=0)
+
+    monkeypatch.setattr(update_module, "build_price_providers", lambda settings, store: [])
+    monkeypatch.setattr(update_module, "update_universe", fake_update)
+    assert main(["update", "--symbols", "AAPL", "--wait"]) == 0
+    assert seen["wait_for_quota"] is True
+    assert seen["recheck"] is False

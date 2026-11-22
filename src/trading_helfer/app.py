@@ -114,6 +114,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--symbols", nargs="+", metavar="SYMBOL", default=None, help="zusätzliche Symbole"
     )
     update.add_argument(
+        "--wait",
+        action="store_true",
+        help="bei erreichtem Tiingo-Limit warten, bis wieder Anfragen frei sind "
+        "(statt den Wert ohne Tiingo abzuschließen); für langes Nachladen über Nacht",
+    )
+    update.add_argument(
         "--recheck",
         action="store_true",
         help="Werte mit Fremdkursen komplett neu laden und dabei alle Kursquellen fragen",
@@ -228,7 +234,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             db_path=args.db,
         )
     if args.command == "update":
-        return run_update(args.index, args.symbols, db_path=args.db, recheck=args.recheck)
+        return run_update(
+            args.index, args.symbols, db_path=args.db, recheck=args.recheck, wait=args.wait
+        )
     if args.command == "import-csv":
         return _run_import_csv(args)
     if args.command == "scan":
@@ -340,6 +348,7 @@ def run_update(
     *,
     db_path: Path | None = None,
     recheck: bool = False,
+    wait: bool = False,
 ) -> int:
     """Führt das Datenupdate aus und meldet den Fortschritt auf der Konsole.
 
@@ -348,6 +357,7 @@ def run_update(
         symbols: Zusätzliche Symbole.
         db_path: DuckDB-Datei; ``None`` = Pfad aus den Einstellungen.
         recheck: Werte mit Fremdkursen komplett neu laden.
+        wait: Bei erschöpftem Kontingent einer Quelle warten statt überspringen.
 
     Returns:
         Exit-Code: 0 ohne Fehler, 1 wenn Symbole fehlschlugen, 2 bei falschen
@@ -379,6 +389,7 @@ def run_update(
                 symbols=symbols or (),
                 start=settings.start_date,
                 recheck=recheck,
+                wait_for_quota=wait,
             )
         except UpdateError as exc:
             print(exc, file=sys.stderr)
