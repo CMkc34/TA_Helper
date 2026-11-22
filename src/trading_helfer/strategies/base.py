@@ -267,6 +267,26 @@ class Params(Mapping[str, Any]):
         """Werte als neues ``dict`` (z. B. für ``params_json``)."""
         return dict(self._values)
 
+    # Params sind unveränderlich: Kopien dürfen dasselbe Objekt teilen. Strategien merken
+    # sich Params oft als Attribut (``self._p``); Portfolio und Optimierung kopieren die
+    # Strategie mit ``copy.deepcopy`` bzw. schicken sie per ``pickle`` in Prozesse.
+
+    def __copy__(self) -> Params:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Params:
+        return self
+
+    def __reduce__(self) -> tuple[Any, tuple[dict[str, Any]]]:
+        return (_restore_params, (dict(self._values),))
+
+
+def _restore_params(values: dict[str, Any]) -> Params:
+    """Stellt geprüfte Params aus ``pickle`` wieder her (ohne erneute Prüfung)."""
+    params = Params.__new__(Params)
+    object.__setattr__(params, "_values", MappingProxyType(dict(values)))
+    return params
+
 
 # ---------------------------------------------------------------------------
 # Orders
