@@ -52,14 +52,15 @@ class MomentumRotation(Strategy):
       Marktfilter erfüllt ist. Größe: ``100 / top_n`` Prozent des Kapitals.
     - Mit Position: Verkauf, wenn der RS-Rang unter ``exit_rank`` fällt oder fehlt
       (Wert nicht mehr im Index oder ohne Kurs). Der Marktfilter schließt keine
-      Positionen, er sperrt nur neue Käufe.
+      Positionen, er sperrt nur neue Käufe; mit ``market_exit`` wird dagegen alles
+      verkauft, sobald der Markt unter seiner SMA schließt.
 
     Fehlen die Marktkurse (z. B. ohne Datenbank), gilt der Marktfilter als erfüllt.
     """
 
     id = "momentum_rotation"
     name = "Momentum-Rotation"
-    version = "1.0.0"
+    version = "1.1.0"
     description = (
         "Rotation: Jede Woche Rangliste aller Indexmitglieder nach der 26-Wochen-Rendite "
         "ohne die letzte Woche (RS-Rang). Kauf der 10 stärksten Werte, solange SPY über "
@@ -74,6 +75,9 @@ class MomentumRotation(Strategy):
         "exit_rank": Param(30.0, 0.0, 90.0, 10.0, "Verkauf, wenn der RS-Rang darunter fällt"),
         "market_sma": Param(40, 10, 80, 5, "Periode der Markt-SMA (Marktfilter)"),
         "market_filter": Param(True, description="Käufe nur, wenn der Markt über der SMA liegt"),
+        "market_exit": Param(
+            False, description="Alle Positionen verkaufen, wenn der Markt unter die SMA fällt"
+        ),
     }
     rank_columns: ClassVar[tuple[str, ...]] = (MOMENTUM_COLUMN,)
     market_symbol: ClassVar[str | None] = "SPY"
@@ -105,6 +109,8 @@ class MomentumRotation(Strategy):
         p = self._p
         rank = self._number(ctx, MOMENTUM_COLUMN + RANK_SUFFIX)
         if ctx.position is not None:
+            if p["market_exit"] and self._market_down(ctx):
+                return ctx.exit(tag="Markt unter SMA")
             if math.isnan(rank) or rank < float(p["exit_rank"]):
                 return ctx.exit(tag="RS-Rang zu schwach")
             return []
@@ -135,6 +141,14 @@ class MomentumRotation(Strategy):
             return float(value)
         except (TypeError, ValueError):
             return math.nan
+
+    @staticmethod
+    def _market_down(ctx: BarContext) -> bool:
+        """``True`` nur, wenn der Markt sicher unter der SMA liegt (nicht im Anlauf)."""
+        if MARKET_ABOVE_COLUMN not in ctx.ind:
+            return False
+        value = MomentumRotation._number(ctx, MARKET_ABOVE_COLUMN)
+        return not math.isnan(value) and value < 0.5
 
     @staticmethod
     def _market_ok(ctx: BarContext) -> bool:
