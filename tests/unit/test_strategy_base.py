@@ -171,6 +171,27 @@ def test_params_are_read_only() -> None:
         p["fast"] = 5  # type: ignore[index]
 
 
+def test_params_survive_copy_and_pickle() -> None:
+    import copy
+    import pickle
+
+    from trading_helfer.strategies.builtin import DonchianBreakout
+
+    p = SmaCross.make_params({"fast": 7})
+    assert copy.copy(p) is p
+    assert copy.deepcopy(p) is p
+    restored = pickle.loads(pickle.dumps(p))
+    assert restored == p
+    assert restored.fast == 7
+    with pytest.raises(AttributeError):
+        restored.fast = 5
+    # Strategien, die sich Params merken, lassen sich kopieren (Portfolio, Optimierung).
+    strategy = DonchianBreakout()
+    clone = copy.deepcopy(strategy)
+    assert clone._p == strategy._p
+    assert pickle.loads(pickle.dumps(strategy))._p == strategy._p
+
+
 # -- Orders --------------------------------------------------------------------
 
 

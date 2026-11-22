@@ -781,7 +781,12 @@ def _run(cls: Any, bars: pd.DataFrame, settings: Any, timeframe: Any, filename: 
     first = pd.Timestamp(bars["date"].iloc[0]).date()
     last = pd.Timestamp(bars["date"].iloc[-1]).date()
     try:
-        return run_backtest(cls, None, _SYMBOL, timeframe, first, last, settings, bars=bars)
+        # Mit Marktfilter dienen die Testkurse auch als Markt; so prüft der
+        # Lookahead-Test auch market_indicators.
+        market = bars if getattr(cls, "market_symbol", None) else None
+        return run_backtest(
+            cls, None, _SYMBOL, timeframe, first, last, settings, bars=bars, market=market
+        )
     except BacktestError as exc:
         raise _StageFailedError(
             f"Zeitrahmen {timeframe.value}: {exc}", _last_line(exc, filename)

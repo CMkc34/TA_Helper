@@ -38,6 +38,12 @@ import pandas as pd
 
 from trading_helfer.backtest.broker_sim import Bar, PendingOrder, SimBroker
 from trading_helfer.backtest.costs import CostModel
+from trading_helfer.backtest.market import (
+    MarketError,
+    attach_market,
+    load_market_daily,
+    market_table,
+)
 from trading_helfer.core.bars import DATE_COLUMN
 from trading_helfer.core.types import Timeframe
 from trading_helfer.data.resample import PARTIAL_COLUMN, resample
@@ -233,6 +239,7 @@ def run_backtest(
     *,
     bars: pd.DataFrame | None = None,
     costs: CostModel | None = None,
+    market: pd.DataFrame | None = None,
 ) -> BacktestResult:
     """Führt einen ereignisgesteuerten Backtest für einen Wert aus.
 
@@ -246,6 +253,9 @@ def run_backtest(
         settings: Einstellungen (Startkapital, Bruchstücke, Gebühr, Slippage, Datenbank).
         bars: Bereinigte Tageskurse statt Laden aus der Datenbank (z. B. für Tests).
         costs: Kostenmodell statt der Kosten aus ``settings``.
+        market: Bereinigte Tageskurse des Markts (``strategy.market_symbol``) statt
+            Laden aus der Datenbank; ist ``symbol`` selbst das Markt-Symbol, dienen
+            ``bars`` als Marktkurse.
 
     Returns:
         Ergebnis mit Trades, Equity-Kurve, Orders und Protokoll.
@@ -275,6 +285,15 @@ def run_backtest(
     )
     daily = bars.copy() if bars is not None else _load_daily(settings, symbol, end_day)
     run = _Run(instance, p, symbol, timeframe, start_day, end_day, broker)
+    if instance.market_symbol:
+        own = {symbol: daily} if symbol == instance.market_symbol else None
+        market_daily = load_market_daily(
+            instance, settings, end_day, market=market, bars=own, log=run.log
+        )
+        try:
+            run.market = market_table(instance, p, market_daily, timeframe)
+        except MarketError as exc:
+            raise StrategyError(str(exc)) from exc
     run.prepare(daily)
     run.loop()
     return run.result()
@@ -336,6 +355,7 @@ class _Run:
         self.submitted: list[_Submitted] = []
         self.equity_rows: list[tuple[Any, ...]] = []
         self.warmup_end: Date | None = None
+        self.market: pd.DataFrame | None = None
 
     # -- Vorbereitung ---------------------------------------------------------
 
@@ -384,6 +404,8 @@ class _Run:
                 f"Strategie {self.strategy.id!r}: indicators() muss ein DataFrame liefern, "
                 f"erhalten: {type(ind).__name__}."
             )
+        if len(ind) == len(frame):
+            ind = attach_market(ind, frame[DATE_COLUMN], self.market)
         try:
             self.series = PreparedSeries(frame, _single_ranks(self.strategy, ind))
         except ValueError as exc:

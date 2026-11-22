@@ -415,3 +415,42 @@ def test_entry_needs_top_place_and_rank() -> None:
     assert orders(95.0, 4.0) == []
     assert orders(30.0, 1.0) == []
     assert orders(np.nan, np.nan) == []
+
+
+def test_market_filter_in_portfolio_run(settings: Settings) -> None:
+    """Liegt SPY unter seiner SMA, kauft die Rotation nicht; danach wieder."""
+    bars = _universe()
+    t = np.arange(DAYS)
+    # SPY fällt bis Tag 600 und steigt danach stark.
+    spy = np.where(t < 600, 200.0 * np.exp(-0.001 * t), 200.0 * np.exp(-0.6 + 0.004 * (t - 600)))
+    with_market = {**bars, "SPY": _bars(spy)}
+    result = run_portfolio_backtest(
+        MomentumRotation,
+        {"lookback": 8, "top_n": 2, "market_sma": 10},
+        list(bars),
+        Timeframe.W1,
+        START,
+        END,
+        settings,
+        max_positions=2,
+        bars=with_market,
+        costs=NO_COSTS,
+    )
+    buys = result.orders[(result.orders["side"] == "BUY") & (result.orders["status"] == "FILLED")]
+    assert len(buys) > 0
+    turn = pd.Timestamp(_bars(spy)["date"].iloc[600])
+    assert (pd.to_datetime(buys["submitted"]) > turn).all()
+    off = run_portfolio_backtest(
+        MomentumRotation,
+        {"lookback": 8, "top_n": 2, "market_sma": 10, "market_filter": False},
+        list(bars),
+        Timeframe.W1,
+        START,
+        END,
+        settings,
+        max_positions=2,
+        bars=with_market,
+        costs=NO_COSTS,
+    )
+    first_off = pd.to_datetime(off.orders.loc[off.orders["side"] == "BUY", "submitted"]).min()
+    assert first_off < turn

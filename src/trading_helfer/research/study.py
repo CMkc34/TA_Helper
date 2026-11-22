@@ -1052,6 +1052,10 @@ class _Runner:
             return self.daily[self.symbol]
         return self.daily
 
+    def _market(self) -> pd.DataFrame | None:
+        symbol = self.strategy.market_symbol
+        return self.daily.get(symbol) if symbol else None
+
     def backtest(self, start: Date, end: Date, costs: CostModel) -> BacktestResult:
         bars = self.bars
         if self.symbol is not None:
@@ -1066,6 +1070,7 @@ class _Runner:
                 self.settings,
                 bars=bars,
                 costs=costs,
+                market=self._market(),
             )
         assert self.universe is not None
         assert isinstance(bars, dict)

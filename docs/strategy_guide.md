@@ -73,6 +73,7 @@ Eine Strategie ist eine Python-Datei mit (mindestens) einer Klasse, die von `Str
 | `description` | `str` | Auf Deutsch: Einstieg, Ausstieg, gedachter Zeitrahmen, Long/Short. |
 | `timeframes` | `ClassVar[list[Timeframe]]` | Nicht leer. Für diese App vor allem `Timeframe.D3` und `Timeframe.W1`, außerdem `Timeframe.MN1`. Der Validator testet jeden genannten Zeitrahmen. |
 | `params` | `ClassVar[dict[str, Param]]` | Parameter, die Anwender und Optimierung ändern dürfen. Darf leer sein. |
+| `market_symbol` | `ClassVar[str \| None]` | Optional (Standard `None`). Markt-Symbol für einen Marktfilter, z. B. `"SPY"`; siehe [Marktfilter](#marktfilter-market_symbol). |
 
 ### Parameter
 
@@ -94,6 +95,7 @@ Eine Strategie ist eine Python-Datei mit (mindestens) einer Klasse, die von `Str
 |---|---|---|
 | `indicators(self, bars, p) -> pd.DataFrame` | nein | Alle Indikatoren vektorisiert über die ganze Reihe. Ergebnis hat dieselbe Zeilenzahl und denselben Index wie `bars`. Standard: keine Spalten. |
 | `on_bar(self, ctx) -> list[Order]` | **ja** | Je Kerze die Orders zurückgeben; leere Liste heißt „nichts tun“. |
+| `market_indicators(self, market, p) -> pd.DataFrame` | nein | Nur mit `market_symbol`: Indikatoren des Markts, vektorisiert über dessen Kerzen. Standard: keine Spalten. |
 | `plot(self) -> list[PlotSpec]` | nein | Welche Indikator-Spalten der Chart zeigt. |
 | `__init__(self)` | nein | Ohne weitere Pflicht-Argumente; die Engine legt die Strategie mit `Klasse()` an. |
 
@@ -152,6 +154,22 @@ brauchen einen Benchmark und sind in Strategien derzeit nicht nutzbar.
 
 Ein Zugriff auf Kerzen nach `t` ist technisch nicht möglich: `ago` darf nicht negativ sein, und
 die Arrays enden bei `t`. Ein solcher Versuch bricht den Backtest mit einem Lookahead-Fehler ab.
+
+### Marktfilter (`market_symbol`)
+
+Mit `market_symbol = "SPY"` lädt die Engine zusätzlich die Kurse des Markts, rechnet sie in den
+Zeitrahmen der Strategie um und ruft `market_indicators(market, p)` mit diesen Kerzen auf
+(gleiche Spalten wie `bars`). Zu jeder Kerze `t` des Werts erscheinen dann in den Indikatoren:
+
+- `market_close`: Close der letzten Marktkerze mit Datum bis einschließlich `t`,
+- jede Spalte aus `market_indicators` mit Präfix `market_`, z. B. `sma` als `market_sma`.
+
+Beispiel Marktfilter „SPY über SMA 40W“: in `market_indicators` die Spalte
+`"sma": market["close"].rolling(40).mean()` liefern und in `on_bar` nur kaufen, wenn
+`ctx.value("market_close") > ctx.value("market_sma")`. Solange die Marktspalten NaN sind,
+ruft die Engine `on_bar` nicht auf (Warm-up). Fehlen die Marktkurse ganz (z. B. im Probelauf
+des Validators), fehlen die Spalten und das Protokoll meldet „Marktfilter ist ausgeschaltet“;
+die Strategie muss dann mit `"market_sma" in ctx.ind` prüfen, ob es die Spalte gibt.
 
 ## Order-Arten und Positionsgröße
 

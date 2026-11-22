@@ -73,6 +73,12 @@ from trading_helfer.backtest.engine import (
     LookaheadError,
     StrategyError,
 )
+from trading_helfer.backtest.market import (
+    MarketError,
+    attach_market,
+    load_market_daily,
+    market_table,
+)
 from trading_helfer.core.bars import DATE_COLUMN
 from trading_helfer.core.types import OrderType, Timeframe
 from trading_helfer.data.resample import PARTIAL_COLUMN, resample
@@ -183,6 +189,7 @@ def run_portfolio_backtest(
     bars: Mapping[str, pd.DataFrame] | None = None,
     costs: CostModel | None = None,
     workers: int | None = None,
+    market: pd.DataFrame | None = None,
 ) -> PortfolioResult:
     """Führt einen Portfolio-Backtest über alle Werte eines Universums aus.
 
@@ -201,6 +208,8 @@ def run_portfolio_backtest(
         costs: Kostenmodell statt der Kosten aus ``settings``.
         workers: Anzahl Prozesse bzw. Threads für die Vorberechnung; ``None`` = Anzahl
             CPU-Kerne, ``1`` = ohne Parallelisierung.
+        market: Bereinigte Tageskurse des Markts (``strategy.market_symbol``); ``None`` =
+            aus ``bars`` (falls dort enthalten) oder aus der Datenbank.
 
     Returns:
         Ergebnis mit Trades aller Werte, gemeinsamer Equity-Kurve, Orders und Protokoll.
@@ -231,7 +240,12 @@ def run_portfolio_backtest(
     if not daily:
         raise BacktestError(f"Keine Kurse für das Universum {name} bis {end_day}.")
 
-    prepared = _prepare_all(template, p, daily, timeframe, start_day, workers)
+    market_daily = load_market_daily(template, settings, end_day, market=market, bars=bars, log=log)
+    try:
+        table = market_table(template, p, market_daily, timeframe)
+    except MarketError as exc:
+        raise StrategyError(str(exc)) from exc
+    prepared = _prepare_all(template, p, daily, timeframe, start_day, workers, table)
     data = [d for d in prepared if d is not None]
     skipped = sorted(set(daily) - {d.symbol for d in data})
     if skipped:
@@ -352,6 +366,7 @@ def _prepare_all(
     timeframe: Timeframe,
     start: Date,
     workers: int | None,
+    market: pd.DataFrame | None = None,
 ) -> list[_SymbolData | None]:
     """Bereitet alle Werte vor: in Prozessen, wenn möglich, sonst in Threads.
 
@@ -362,7 +377,7 @@ def _prepare_all(
     """
     symbols = sorted(daily)
     values = params.to_dict()  # Params selbst lässt sich nicht pickeln
-    jobs = [(template, values, s, daily[s], timeframe, start) for s in symbols]
+    jobs = [(template, values, s, daily[s], timeframe, start, market) for s in symbols]
     count = workers if workers is not None else (os.cpu_count() or 1)
     if count <= 1:
         return [_prepare_job(job) for job in jobs]
@@ -392,11 +407,11 @@ def _process_safe(template: Strategy) -> bool:
 
 
 def _prepare_job(
-    job: tuple[Strategy, dict[str, Any], str, pd.DataFrame, Timeframe, Date],
+    job: tuple[Strategy, dict[str, Any], str, pd.DataFrame, Timeframe, Date, pd.DataFrame | None],
 ) -> _SymbolData | None:
-    template, values, symbol, daily, timeframe, start = job
+    template, values, symbol, daily, timeframe, start, market = job
     params = template.make_params(values)
-    return _prepare_symbol(template, params, symbol, daily, timeframe, start)
+    return _prepare_symbol(template, params, symbol, daily, timeframe, start, market)
 
 
 @dataclass
@@ -427,6 +442,7 @@ def _prepare_symbol(
     daily: pd.DataFrame,
     timeframe: Timeframe,
     start: Date,
+    market: pd.DataFrame | None = None,
 ) -> _SymbolData | None:
     """Zeitrahmen umrechnen und Indikatoren berechnen (läuft in einem Thread)."""
     if daily.empty:
@@ -453,6 +469,8 @@ def _prepare_symbol(
             f"erhalten: {type(ind).__name__}."
         )
     ind = ind.reset_index(drop=True)
+    if len(ind) == len(frame):
+        ind = attach_market(ind, frame[DATE_COLUMN], market)
     try:
         series = PreparedSeries(frame, ind)
     except ValueError as exc:
