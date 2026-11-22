@@ -54,7 +54,7 @@ Bewertung deshalb:
 ```bash
 # Tiingo als Ersatzquelle (kostenloser Key, 50 Anfragen pro Stunde, 1.000 pro Tag)
 set TH_TIINGO_API_KEY=...          # PowerShell: $env:TH_TIINGO_API_KEY = "..."
-uv run trading-helfer update --index SP500 --recheck   # bei Kontingent-Ende später wiederholen
+uv run trading-helfer update --index SP500 --recheck --wait   # wartet am Tiingo-Limit, über Nacht laufen lassen
 uv run trading-helfer quality --exclude                 # Fremdkurse ausschließen, Bericht
 uv run trading-helfer exclude                           # Liste der ausgeschlossenen Werte
 ```

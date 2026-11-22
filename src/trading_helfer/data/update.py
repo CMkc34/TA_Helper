@@ -16,6 +16,9 @@
   (:func:`~trading_helfer.data.quality.check_foreign_prices`, z. B. Kurse einer neuen
   Firma unter einem neu vergebenen Ticker). Dann wird die nächste Quelle gefragt; hat
   keine bessere Kurse, bleiben die ersten gespeichert.
+- Mit ``wait_for_quota=True`` wartet das Update, wenn eine Quelle ihr Anfragekontingent
+  erschöpft hat (Tiingo: 50 pro Stunde), bis sie wieder frei ist, statt das Symbol
+  ohne diese Quelle abzuschließen. So läuft ein großes Nachladen in einem Durchgang.
 - Mit ``recheck=True`` werden Symbole mit gespeicherten Fremdkursen komplett neu geladen.
 - Am Ende bewertet :func:`~trading_helfer.data.quality.refresh_exclusions` die
   automatischen Ausschlüsse der bearbeiteten Symbole neu.
@@ -32,9 +35,10 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import math
+import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 
 import pandas as pd
 
@@ -77,6 +81,15 @@ DEFAULT_START: Final = dt.date(1990, 1, 1)
 
 MAX_LISTED_FAILURES: Final = 20
 """Höchstzahl fehlgeschlagener Symbole, die die Meldung in ``update_log`` aufzählt."""
+
+QUOTA_WAIT_MARGIN: Final = dt.timedelta(seconds=30)
+"""Zuschlag auf den von der Quelle gemeldeten Zeitpunkt, ab dem sie wieder frei ist."""
+
+QUOTA_WAIT_UNKNOWN: Final = dt.timedelta(hours=1)
+"""Wartezeit, wenn die Quelle ablehnt, ohne einen Zeitpunkt zu nennen."""
+
+QUOTA_WAIT_MAX_TRIES: Final = 3
+"""So oft wird je Anfrage höchstens gewartet; danach gilt die Quelle als fehlgeschlagen."""
 
 ProgressCallback = Callable[[int, int, str], None]
 """Fortschritt als ``(erledigt, gesamt, symbol)``; wird nach jedem Symbol aufgerufen."""
@@ -229,6 +242,8 @@ def update_universe(
     today: dt.date | None = None,
     should_cancel: Callable[[], bool] | None = None,
     recheck: bool = False,
+    wait_for_quota: bool = False,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> UpdateResult:
     """Bringt die Kurse aller Mitglieder von ``index_codes`` und von ``symbols`` auf Stand.
 
@@ -246,6 +261,9 @@ def update_universe(
         should_cancel: Wird vor jedem Symbol gefragt; ``True`` beendet den Lauf sauber.
         recheck: Symbole mit gespeicherten Fremdkursen ganz neu laden (alle Quellen
             fragen) statt nur inkrementell.
+        wait_for_quota: Bei erschöpftem Kontingent einer Quelle warten, bis sie wieder
+            frei ist, und die Anfrage dann wiederholen.
+        sleep: Wartefunktion (Sekunden); in Tests ersetzbar.
 
     Returns:
         Das Ergebnis mit Erfolgen, Fehlern und der ``id`` in ``update_log``.
@@ -256,6 +274,8 @@ def update_universe(
     """
     if not providers:
         raise UpdateError("Keine Kursquelle angegeben.")
+    if wait_for_quota:
+        providers = [_WaitingProvider(p, sleep) for p in providers]
     end = today if today is not None else dt.date.today()
     all_symbols = collect_symbols(index_codes, symbols, start=start, end=end)
     provider_names = ",".join(p.name for p in providers)
@@ -443,6 +463,58 @@ def _fetch_daily(
     return fallback
 
 
+class _WaitingProvider:
+    """Hülle um eine Kursquelle, die bei erschöpftem Kontingent wartet und wiederholt.
+
+    Erkennt das Kontingent-Ende an einem :class:`ProviderError` mit Attribut
+    ``resume_at`` (z. B. ``TiingoQuotaExceededError``). Alle anderen Attribute und
+    Methoden (``name``, ``fetch_instrument`` …) reicht sie unverändert durch.
+    """
+
+    def __init__(self, inner: PriceProvider, sleep: Callable[[float], None]) -> None:
+        self._inner = inner
+        self._sleep = sleep
+
+    @property
+    def inner(self) -> PriceProvider:
+        """Die eingehüllte Quelle."""
+        return self._inner
+
+    def __getattr__(self, attr: str) -> Any:
+        return getattr(self._inner, attr)
+
+    def fetch_daily(self, symbol: str, start: dt.date, end: dt.date) -> pd.DataFrame:
+        """Wie die Quelle, wartet aber bei erschöpftem Kontingent."""
+        return self._waiting(lambda: self._inner.fetch_daily(symbol, start, end))
+
+    def fetch_actions(self, symbol: str) -> pd.DataFrame:
+        """Wie die Quelle, wartet aber bei erschöpftem Kontingent."""
+        return self._waiting(lambda: self._inner.fetch_actions(symbol))
+
+    def _waiting(self, call: Callable[[], pd.DataFrame]) -> pd.DataFrame:
+        for attempt in range(QUOTA_WAIT_MAX_TRIES + 1):
+            try:
+                return call()
+            except ProviderError as exc:
+                if not hasattr(exc, "resume_at") or attempt == QUOTA_WAIT_MAX_TRIES:
+                    raise
+                resume_at = exc.resume_at
+                now = dt.datetime.now(dt.UTC).replace(tzinfo=None)
+                if isinstance(resume_at, dt.datetime):
+                    pause = max(resume_at - now, dt.timedelta(0)) + QUOTA_WAIT_MARGIN
+                else:
+                    pause = QUOTA_WAIT_UNKNOWN
+                local = dt.datetime.now() + pause
+                _log.warning(
+                    "%s: Kontingent erschöpft, warte bis %s (%d min).",
+                    self._inner.name,
+                    f"{local:%H:%M}",
+                    math.ceil(pause.total_seconds() / 60),
+                )
+                self._sleep(pause.total_seconds())
+        raise AssertionError("unerreichbar")  # pragma: no cover
+
+
 def _source_first(
     store: MarketStore, providers: Sequence[PriceProvider], symbol: str
 ) -> list[PriceProvider]:
@@ -503,6 +575,8 @@ def _refresh_exclusions(
 
 def _fetch_instrument(provider: PriceProvider, symbol: str) -> pd.DataFrame | None:
     """Stammdaten von der Quelle, falls sie welche liefert; Fehler werden nur protokolliert."""
+    if isinstance(provider, _WaitingProvider):
+        provider = provider.inner
     if not isinstance(provider, InstrumentProvider):
         return None
     try:
