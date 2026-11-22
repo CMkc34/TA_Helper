@@ -891,6 +891,12 @@ class Strategy(ABC):
         description: Beschreibung auf Deutsch.
         timeframes: Unterstützte Zeitrahmen.
         params: Parameterdefinitionen.
+        market_symbol: Optionales Markt-Symbol (z. B. ``"SPY"``) für einen Marktfilter.
+            Ist es gesetzt, laden die Engines dessen Kurse, rechnen sie in den Zeitrahmen
+            um und hängen ``market_close`` sowie die Spalten aus
+            :meth:`market_indicators` mit Präfix ``market_`` an die Indikatoren jeder
+            Kerze an (letzte Marktkerze bis einschließlich ``t``). Fehlen die Kurse,
+            fehlen die Spalten; die Strategie muss das tolerieren.
     """
 
     id: ClassVar[str]
@@ -899,6 +905,7 @@ class Strategy(ABC):
     description: ClassVar[str]
     timeframes: ClassVar[list[Timeframe]]
     params: ClassVar[dict[str, Param]] = {}
+    market_symbol: ClassVar[str | None] = None
 
     @classmethod
     def make_params(cls, values: Mapping[str, Any] | None = None) -> Params:
@@ -922,6 +929,22 @@ class Strategy(ABC):
             DataFrame mit gleichem Index wie ``bars``; Standard: keine Spalten.
         """
         return pd.DataFrame(index=bars.index)
+
+    def market_indicators(self, market: pd.DataFrame, p: Params) -> pd.DataFrame:
+        """Optional: Indikatoren des Markts (nur mit ``market_symbol``) vektorisiert berechnen.
+
+        Die Spalten erscheinen mit Präfix ``market_`` in den Indikatoren jedes Werts,
+        z. B. ``sma`` als ``market_sma``. Der Wert in Zeile ``t`` darf nur von
+        Marktkerzen bis ``t`` abhängen.
+
+        Args:
+            market: Kerzen des Markts im Zeitrahmen der Strategie (bereinigte Kurse).
+            p: Geprüfte Parameter.
+
+        Returns:
+            DataFrame mit gleicher Zeilenzahl wie ``market``; Standard: keine Spalten.
+        """
+        return pd.DataFrame(index=market.index)
 
     @abstractmethod
     def on_bar(self, ctx: BarContext) -> list[Order]:

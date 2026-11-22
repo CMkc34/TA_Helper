@@ -456,3 +456,39 @@ def test_synthetic_bars_are_deterministic_and_valid() -> None:
 def test_builtin_package_is_importable() -> None:
     """Sicherstellen, dass der Builtin-Test nicht wegen eines Importfehlers leer bleibt."""
     assert import_module(builtin.__name__) is builtin
+
+
+def test_market_filter_strategy_passes_with_test_bars_as_market() -> None:
+    extra = """
+def market_indicators(self, market, p):
+    return pd.DataFrame({"sma": market["close"].rolling(10).mean()})
+"""
+    on_bar = """
+assert "market_sma" in ctx.ind
+up = ctx.value("market_close") > ctx.value("market_sma")
+if ctx.position is None and up:
+    return [ctx.buy(sizing=Sizing.percent_equity(100))]
+if ctx.position is not None and not up:
+    return ctx.exit()
+return []
+"""
+    source = _strategy(on_bar=on_bar, extra=extra, cls_extra='market_symbol = "SPY"')
+    report = _check(source)
+    assert report.ok, report.format()
+
+
+def test_lookahead_in_market_indicators_is_found() -> None:
+    extra = """
+def market_indicators(self, market, p):
+    return pd.DataFrame({"next": market["close"].shift(-1)})
+"""
+    on_bar = """
+rising = ctx.value("market_next") > ctx.value("market_close")
+if ctx.position is None and rising:
+    return [ctx.buy(sizing=Sizing.percent_equity(100))]
+if ctx.position is not None and not rising:
+    return ctx.exit()
+return []
+"""
+    source = _strategy(on_bar=on_bar, extra=extra, cls_extra='market_symbol = "SPY"')
+    _assert_rejected(_check(source), S.LOOKAHEAD)

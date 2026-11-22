@@ -216,9 +216,13 @@ class Strategy(ABC):
     description: ClassVar[str]
     timeframes: ClassVar[list[Timeframe]]  # z. B. [Timeframe.D3, Timeframe.W1]
     params: ClassVar[dict[str, Param]]  # Param(default, min, max, step, beschreibung)
+    market_symbol: ClassVar[str | None] = None  # optional, z. B. "SPY" für einen Marktfilter
 
     def indicators(self, bars: pd.DataFrame, p: Params) -> pd.DataFrame:
         """Vektorisiert alle Indikatoren vorab berechnen."""
+
+    def market_indicators(self, market: pd.DataFrame, p: Params) -> pd.DataFrame:
+        """Optional: Indikatoren des Markts; erscheinen als Spalten market_<name>."""
 
     @abstractmethod
     def on_bar(self, ctx: BarContext) -> list[Order]:
@@ -228,6 +232,7 @@ class Strategy(ABC):
         """Optional: welche Linien und Marker im Chart erscheinen."""
 ```
 
+- Marktfilter: Mit `market_symbol` laden die Engines die Marktkurse (übergeben, aus den Kursen des Laufs oder aus der Datenbank), rechnen sie in den Zeitrahmen um und hängen `market_close` und die Spalten aus `market_indicators` mit Präfix `market_` an die Indikatoren jeder Kerze an (letzte Marktkerze bis einschließlich t). Ohne Marktkurse fehlen die Spalten, das Protokoll meldet es.
 - Validator vor dem Laden: Syntax, Pflichtfelder, keine Netzwerk- oder Dateizugriffe (AST-Prüfung auf verbotene Importe wie `os`, `socket`, `requests`, `subprocess`), Lookahead-Test (Ergebnis bis t darf sich nicht ändern, wenn Daten nach t verändert werden), Lauf auf Testdaten ohne Fehler.
 - GUI-Funktion „Strategie hinzufügen“: Datei wählen oder Code einfügen, Validator-Bericht ansehen, dann in `plugins/` speichern.
 - `docs/strategy_guide.md` erklärt die Schnittstelle so, dass eine KI daraus eine gültige Strategie schreibt (inkl. Vorlage und zwei Beispielen).
