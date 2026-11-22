@@ -15,7 +15,7 @@ from trading_helfer.backtest.costs import CostModel
 from trading_helfer.backtest.engine import StrategyError, run_backtest
 from trading_helfer.backtest.portfolio import run_portfolio_backtest
 from trading_helfer.core.config import Settings
-from trading_helfer.core.types import Timeframe
+from trading_helfer.core.types import Side, Timeframe
 from trading_helfer.data.resample import PARTIAL_COLUMN, resample
 from trading_helfer.data.universe import IndexChange, IndexHistory
 from trading_helfer.indicators.relative_strength import percentile_rank, rs_rank
@@ -26,6 +26,7 @@ from trading_helfer.strategies.base import (
     Order,
     Param,
     Params,
+    Position,
     PreparedSeries,
     Strategy,
 )
@@ -236,6 +237,7 @@ def test_metadata_and_defaults() -> None:
         "exit_rank": 30.0,
         "market_sma": 40,
         "market_filter": True,
+        "market_exit": False,
     }
 
 
@@ -454,3 +456,34 @@ def test_market_filter_in_portfolio_run(settings: Settings) -> None:
     )
     first_off = pd.to_datetime(off.orders.loc[off.orders["side"] == "BUY", "submitted"]).min()
     assert first_off < turn
+
+
+def test_market_exit_sells_held_positions() -> None:
+    """Mit market_exit wird bei Markt unter SMA verkauft, sonst nur nach RS-Rang."""
+    frame = _weekly(_universe()["AAA"])
+    n = len(frame)
+
+    def orders(market: float | None, market_exit: bool) -> list[Order]:
+        strategy = MomentumRotation()
+        strategy.indicators(frame, MomentumRotation.make_params({"market_exit": market_exit}))
+        cols = {
+            MOMENTUM_COLUMN: np.full(n, 0.3),
+            MOMENTUM_COLUMN + RANK_SUFFIX: np.full(n, 90.0),
+            MOMENTUM_COLUMN + POSITION_SUFFIX: np.full(n, 1.0),
+        }
+        if market is not None:
+            cols[MARKET_ABOVE_COLUMN] = np.full(n, market)
+        series = PreparedSeries(frame, pd.DataFrame(cols))
+        held = Position("AAA", Side.LONG, 1.0, 100.0, date(2020, 6, 5))
+        ctx = BarContext.at(
+            series, 40, symbol="AAA", timeframe=Timeframe.W1, position=held, equity=1000.0
+        )
+        return strategy.on_bar(ctx)
+
+    sold = orders(0.0, True)
+    assert len(sold) == 1
+    assert sold[0].tag == "Markt unter SMA"
+    assert orders(0.0, False) == []
+    assert orders(1.0, True) == []
+    assert orders(np.nan, True) == []  # Anlauf der Markt-SMA: kein Verkauf
+    assert orders(None, True) == []  # ohne Marktkurse kein Verkauf
