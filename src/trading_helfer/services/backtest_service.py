@@ -494,12 +494,32 @@ class BacktestService:
             costs=costs,
         )
 
-    def _run_index(
-        self, request: BacktestRequest, costs: CostModel, report: ProgressFn
-    ) -> BacktestResult:
-        code = request.universe.strip().upper()
+    def load_bars(self, symbol: str) -> pd.DataFrame:
+        """Bereinigte Tageskurse von ``symbol`` (leer, wenn es keine gibt)."""
+        return self._bars_loader(symbol)
+
+    def index_bars(
+        self,
+        code: str,
+        start: dt.date,
+        end: dt.date,
+        progress: ProgressFn | None = None,
+    ) -> dict[str, pd.DataFrame]:
+        """Kurse aller Werte, die im Zeitraum Mitglied des Index ``code`` waren.
+
+        Args:
+            code: Index-Code (``"SP500"``, ``"NDX100"``).
+            start: Erster Tag des Zeitraums.
+            end: Letzter Tag des Zeitraums.
+            progress: Fortschritt 5–30 % beim Laden.
+
+        Raises:
+            BacktestError: Unbekannter Index oder keine Kurse im Zeitraum.
+        """
+        report = progress if progress is not None else (lambda _p, _m: None)
+        code = code.strip().upper()
         try:
-            members = index_universe.all_members(code, request.start, request.end)
+            members = index_universe.all_members(code, start, end)
         except index_universe.UniverseError as exc:
             raise BacktestError(str(exc)) from exc
         available = set(self._symbols_loader())
@@ -514,6 +534,13 @@ class BacktestService:
             frame = self._bars_loader(symbol)
             if not frame.empty:
                 bars[symbol] = frame
+        return bars
+
+    def _run_index(
+        self, request: BacktestRequest, costs: CostModel, report: ProgressFn
+    ) -> BacktestResult:
+        code = request.universe.strip().upper()
+        bars = self.index_bars(code, request.start, request.end, report)
         report(30, f"Portfolio-Backtest über {len(bars)} Werte")
         settings = self.settings.model_copy(update={"default_capital": request.capital})
         return run_portfolio_backtest(

@@ -810,8 +810,15 @@ def _collect(
 ) -> list[dict[str, Any]]:
     futures = {pool.submit(func, combo): i for i, combo in enumerate(combos)}
     rows: list[dict[str, Any] | None] = [None] * len(combos)
-    for done, future in enumerate(as_completed(futures), start=1):
-        rows[futures[future]] = future.result()
-        if progress is not None:
-            progress(done, len(combos))
+    try:
+        for done, future in enumerate(as_completed(futures), start=1):
+            rows[futures[future]] = future.result()
+            if progress is not None:
+                progress(done, len(combos))
+    except BaseException:
+        # Abbruch (z. B. aus dem Fortschritts-Rückruf): wartende Kombinationen streichen,
+        # damit das Beenden des Pools nicht auf das ganze Raster wartet.
+        for future in futures:
+            future.cancel()
+        raise
     return [r for r in rows if r is not None]

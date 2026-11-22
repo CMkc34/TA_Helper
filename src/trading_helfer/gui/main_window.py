@@ -27,16 +27,18 @@ from trading_helfer.gui.widgets.backtest import BacktestWidget
 from trading_helfer.gui.widgets.chart import ChartWidget
 from trading_helfer.gui.widgets.data import DataWidget
 from trading_helfer.gui.widgets.fundamentals import FundamentalsWidget
+from trading_helfer.gui.widgets.optimization import OptimizationWidget
 from trading_helfer.gui.widgets.scanner import ScannerWidget
 from trading_helfer.gui.widgets.strategies import StrategiesWidget
 from trading_helfer.gui.widgets.watchlist import WatchlistWidget
 from trading_helfer.gui.worker import Worker, WorkerError
 from trading_helfer.services.app_service import AppService, ThemeName
-from trading_helfer.services.backtest_service import BacktestService
+from trading_helfer.services.backtest_service import BacktestService, UniverseKind
 from trading_helfer.services.chart_service import ChartService
 from trading_helfer.services.data_service import DataService
 from trading_helfer.services.fundamentals_service import FundamentalsService
 from trading_helfer.services.indicator_service import TEMPLATES_FILE_NAME, IndicatorService
+from trading_helfer.services.optimization_service import OptimizationRequest, OptimizationService
 from trading_helfer.services.scanner_service import ScannerService
 from trading_helfer.services.strategy_service import StrategyService
 
@@ -86,6 +88,8 @@ class MainWindow(QMainWindow):
             von ``service``.
         scanner_service: Strategien, Scan und Verlauf für den Scanner-Tab; Standard ist
             ein :class:`ScannerService` mit den Einstellungen von ``service``.
+        optimization_service: Raster, Walk-Forward und Monte Carlo für den
+            Optimierungs-Tab; Standard nutzt Strategien und Kurse von ``backtest_service``.
     """
 
     def __init__(
@@ -99,6 +103,7 @@ class MainWindow(QMainWindow):
         data_service: DataService | None = None,
         backtest_service: BacktestService | None = None,
         scanner_service: ScannerService | None = None,
+        optimization_service: OptimizationService | None = None,
     ) -> None:
         super().__init__(parent)
         self.service = service
@@ -134,6 +139,15 @@ class MainWindow(QMainWindow):
         self.backtest = BacktestWidget(self.backtest_service, runner=self.run_task)
         self.backtest.trade_activated.connect(self.show_trade_chart)
         self.set_view("backtest", self.backtest)
+
+        self.optimization_service = (
+            optimization_service
+            if optimization_service is not None
+            else OptimizationService(self.backtest_service)
+        )
+        self.optimization = OptimizationWidget(self.optimization_service, runner=self.run_task)
+        self.optimization.apply_requested.connect(self.apply_optimization)
+        self.set_view("optimization", self.optimization)
 
         self.strategy_service = (
             strategy_service
@@ -358,6 +372,25 @@ class MainWindow(QMainWindow):
         name = self.strategy_service.registry.info(strategy_id).name
         self.statusBar().showMessage(texts.STRATEGIES_STATUS_BACKTEST.format(name=name))
 
+    def apply_optimization(self, request: OptimizationRequest, params: dict[str, Any]) -> None:
+        """Übernimmt Strategie, Universum, Zeitraum und ``params`` in den Backtest-Tab."""
+        backtest = self.backtest
+        if not backtest.select_strategy(request.strategy_id):
+            return
+        if request.universe_kind is UniverseKind.INDEX:
+            backtest.set_index(request.universe)
+        else:
+            backtest.set_symbol(request.universe)
+        try:
+            backtest.set_timeframe(request.timeframe)
+        except KeyError:
+            logger.warning("Zeitrahmen %s nicht verfügbar", request.timeframe)
+        backtest.set_period(request.start, request.end)
+        for name, value in params.items():
+            backtest.set_param(name, value)
+        self.tabs.setCurrentWidget(backtest)
+        self.statusBar().showMessage(texts.OPT_STATUS_APPLIED)
+
     def _on_data_changed(self, _result: object) -> None:
         """Verwirft zwischengespeicherte Kurse und Kennzahlen nach Update oder Import."""
         self.chart_service.invalidate()
@@ -382,10 +415,12 @@ class MainWindow(QMainWindow):
         if self._signal_symbol is not None and symbol != self._signal_symbol:
             self._signal_symbol = None
             self.chart.clear_markers()
-        # Im Kennzahlen- und Backtest-Tab bleiben; sonst den Chart zeigen.
+        # Im Kennzahlen-, Backtest- und Optimierungs-Tab bleiben; sonst den Chart zeigen.
         current = self.tabs.currentWidget()
         if current is self.backtest:
             self.backtest.set_symbol(symbol)
+        elif current is self.optimization:
+            self.optimization.set_symbol(symbol)
         elif current is not self.fundamentals:
             self.tabs.setCurrentWidget(self.chart)
         self.chart.load_symbol(symbol)

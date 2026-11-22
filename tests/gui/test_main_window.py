@@ -39,9 +39,9 @@ def test_menus(window: MainWindow) -> None:
     assert menus == [texts.MENU_FILE, texts.MENU_VIEW, texts.MENU_HELP]
 
 
-def test_set_view_replaces_placeholder(window: MainWindow, qtbot: QtBot) -> None:
-    assert isinstance(window.tab_widget("optimization"), QLabel)
-    view = QLabel("echte Optimierung")
+def test_set_view_replaces_widget(window: MainWindow, qtbot: QtBot) -> None:
+    assert not isinstance(window.tab_widget("optimization"), QLabel)
+    view = QLabel("andere Optimierung")
     window.set_view("optimization", view)
     assert window.tab_widget("optimization") is view
     assert window.tabs.tabText(3) == "Optimierung"

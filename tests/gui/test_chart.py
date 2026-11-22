@@ -333,7 +333,7 @@ def test_watchlist_click_loads_symbol(
     win = MainWindow(service, chart_service=ChartService(lambda _s: daily))
     qtbot.addWidget(win)
     assert win.tab_widget("chart") is win.chart
-    win.tabs.setCurrentIndex(3)  # Platzhalter „Optimierung“
+    win.tabs.setCurrentWidget(win.scanner)  # Tab ohne eigene Symbolübernahme
     win.watchlist.add_symbol("SYNTH")
     item = win.watchlist.symbol_list.item(0)
     with qtbot.waitSignal(win.chart.data_loaded, timeout=10_000):
