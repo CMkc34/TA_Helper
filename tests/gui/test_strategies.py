@@ -22,6 +22,7 @@ from trading_helfer.gui.widgets.strategies import (
 )
 from trading_helfer.services.app_service import AppService
 from trading_helfer.services.strategy_service import SaveResult, StrategyService
+from trading_helfer.strategies.builtin import BUILTIN_STRATEGIES
 from trading_helfer.strategies.validator import validate
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
@@ -65,7 +66,7 @@ def test_list_shows_builtin_strategies(widget: StrategiesWidget) -> None:
     assert widget.selected_key() is None
     assert widget.header_label.text() == texts.STRATEGIES_NONE_SELECTED
     assert not widget.backtest_button.isEnabled()
-    assert "3 Strategien" in widget.summary_label.text()
+    assert f"{len(BUILTIN_STRATEGIES)} Strategien" in widget.summary_label.text()
 
 
 def test_details_and_open_in_backtest(qtbot: QtBot, widget: StrategiesWidget) -> None:
