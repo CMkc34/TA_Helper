@@ -45,7 +45,7 @@ from dataclasses import dataclass
 from datetime import date as Date  # noqa: N812
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Final, Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -55,6 +55,8 @@ from trading_helfer.core.bars import DATE_COLUMN
 from trading_helfer.core.types import OrderType, Side, Timeframe
 
 __all__ = [
+    "POSITION_SUFFIX",
+    "RANK_SUFFIX",
     "BarContext",
     "BarsView",
     "IndicatorView",
@@ -72,6 +74,12 @@ __all__ = [
     "SizingMethod",
     "Strategy",
 ]
+
+RANK_SUFFIX: Final = "_rank"
+"""Endung der Spalte mit dem Perzentilrang einer ``rank_columns``-Spalte."""
+
+POSITION_SUFFIX: Final = "_pos"
+"""Endung der Spalte mit dem Platz (1 = höchster Wert) einer ``rank_columns``-Spalte."""
 
 ParamKind = Literal["int", "float", "bool", "choice"]
 """Typ eines Parameters."""
@@ -507,6 +515,30 @@ class PreparedSeries:
         }
         self._ind_cols = {str(c): _readonly(ind[c].to_numpy()) for c in ind.columns}
 
+    def with_indicators(self, extra: Mapping[str, npt.NDArray[Any]]) -> PreparedSeries:
+        """Neue Reihe mit zusätzlichen Indikatorspalten (gleiche Kurse, ohne Kopie).
+
+        Args:
+            extra: Spaltenname → Werte mit genau ``length`` Einträgen; gleichnamige
+                Spalten werden ersetzt.
+
+        Raises:
+            ValueError: Eine Spalte hat eine andere Länge als die Reihe.
+        """
+        clone = object.__new__(PreparedSeries)
+        clone.length = self.length
+        clone._dates = self._dates
+        clone._bar_cols = self._bar_cols
+        cols = dict(self._ind_cols)
+        for name, values in extra.items():
+            if len(values) != self.length:
+                raise ValueError(
+                    f"Indikator {name!r} hat {len(values)} Werte, Kursdaten {self.length}."
+                )
+            cols[str(name)] = _readonly(np.asarray(values))
+        clone._ind_cols = cols
+        return clone
+
     def _check(self, t: int) -> int:
         if not 0 <= t < self.length:
             raise IndexError(f"Kerze {t} außerhalb von 0 … {self.length - 1}.")
@@ -891,6 +923,12 @@ class Strategy(ABC):
         description: Beschreibung auf Deutsch.
         timeframes: Unterstützte Zeitrahmen.
         params: Parameterdefinitionen.
+        rank_columns: Indikatorspalten, die die Portfolio-Engine je Termin über das
+            Universum rangiert (Querschnitt). Für jede Spalte ``c`` stehen danach
+            ``c_rank`` (Perzentilrang 0 bis 100, 100 = höchster Wert, wie beim RS-Rang)
+            und ``c_pos`` (Platz 1 = höchster Wert) in ``ctx.ind``. Es zählen nur Werte,
+            die am Termin Indexmitglied sind und einen gültigen Wert haben; sonst NaN.
+            Im Einzelwert-Backtest gilt der Wert als einziger: Rang 100, Platz 1.
     """
 
     id: ClassVar[str]
@@ -899,6 +937,7 @@ class Strategy(ABC):
     description: ClassVar[str]
     timeframes: ClassVar[list[Timeframe]]
     params: ClassVar[dict[str, Param]] = {}
+    rank_columns: ClassVar[tuple[str, ...]] = ()
 
     @classmethod
     def make_params(cls, values: Mapping[str, Any] | None = None) -> Params:

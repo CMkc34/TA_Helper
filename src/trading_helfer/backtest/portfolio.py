@@ -82,9 +82,12 @@ from trading_helfer.data.universe import (
     load_history,
     survivorship_risk,
 )
+from trading_helfer.indicators.relative_strength import percentile_rank
 from trading_helfer.indicators.volatility import atr as atr_indicator
 from trading_helfer.indicators.volatility import historical_volatility
 from trading_helfer.strategies.base import (
+    POSITION_SUFFIX,
+    RANK_SUFFIX,
     BarContext,
     Order,
     Params,
@@ -539,6 +542,7 @@ class _PortfolioRun:
         self._rank_counter = 0
         self.warmup_end: Date | None = None
         self._build_grid()
+        self._apply_ranks()
 
     # -- Zeitachse ------------------------------------------------------------
 
@@ -573,6 +577,57 @@ class _PortfolioRun:
             self.warmup_end = min(starts) if starts else None
             if self.warmup_end is None:
                 self.log.append("Indikatoren werden im Zeitraum nie vollständig; keine Signale.")
+
+    # -- Querschnitts-Rang ----------------------------------------------------
+
+    def _apply_ranks(self) -> None:
+        """Rangiert ``strategy.rank_columns`` je Termin über alle Mitglieder.
+
+        Ergebnis je Spalte ``c``: ``c_rank`` (Perzentilrang 0 bis 100) und ``c_pos``
+        (Platz 1 = höchster Wert; bei Gleichstand alphabetisch). Der Wert einer Kerze
+        hängt nur von Kerzen am selben Termin ab, also nicht von der Zukunft.
+        """
+        columns = tuple(self.strategy.rank_columns)
+        if not columns:
+            return
+        sources: dict[str, dict[str, np.ndarray[Any, Any]]] = {}
+        for d in self.data:
+            view = d.series.ind_at(d.series.length - 1)
+            missing = [c for c in columns if c not in view]
+            if missing:
+                raise StrategyError(
+                    f"Strategie {self.strategy.id!r}: rank_columns {missing} fehlen in den "
+                    f"Indikatoren von {d.symbol}."
+                )
+            sources[d.symbol] = {
+                c: pd.to_numeric(pd.Series(view.column(c)), errors="coerce").to_numpy(float)
+                for c in columns
+            }
+        targets = {
+            d.symbol: {
+                f"{c}{suffix}": np.full(d.series.length, np.nan)
+                for c in columns
+                for suffix in (RANK_SUFFIX, POSITION_SUFFIX)
+            }
+            for d in self.data
+        }
+        for g, entries in enumerate(self.events):
+            members = self.is_member(self.grid_dates[g])
+            pool = [(d, i) for d, i in entries if members is None or d.symbol in members]
+            for c in columns:
+                rows = [(d, i, sources[d.symbol][c][i]) for d, i in pool]
+                rows = [r for r in rows if math.isfinite(r[2])]
+                if not rows:
+                    continue
+                values = pd.Series([r[2] for r in rows], dtype="float64")
+                ranks = percentile_rank(values).to_numpy()
+                order = sorted(range(len(rows)), key=lambda k: (-rows[k][2], rows[k][0].symbol))
+                for place, k in enumerate(order, start=1):
+                    d, i, _ = rows[k]
+                    targets[d.symbol][c + RANK_SUFFIX][i] = ranks[k]
+                    targets[d.symbol][c + POSITION_SUFFIX][i] = float(place)
+        for d in self.data:
+            d.series = d.series.with_indicators(targets[d.symbol])
 
     # -- Schleife -------------------------------------------------------------
 

@@ -44,6 +44,8 @@ from trading_helfer.data.resample import PARTIAL_COLUMN, resample
 from trading_helfer.indicators.volatility import atr as atr_indicator
 from trading_helfer.indicators.volatility import historical_volatility
 from trading_helfer.strategies.base import (
+    POSITION_SUFFIX,
+    RANK_SUFFIX,
     BarContext,
     Order,
     Params,
@@ -383,7 +385,7 @@ class _Run:
                 f"erhalten: {type(ind).__name__}."
             )
         try:
-            self.series = PreparedSeries(frame, ind.reset_index(drop=True))
+            self.series = PreparedSeries(frame, _single_ranks(self.strategy, ind))
         except ValueError as exc:
             raise StrategyError(f"Strategie {self.strategy.id!r}: {exc}") from exc
         self.signal_start = self._warmup_index(ind)
@@ -584,6 +586,25 @@ class _Run:
                 )
             )
         return pd.DataFrame(rows, columns=list(ORDER_COLUMNS))
+
+
+def _single_ranks(strategy: Strategy, ind: pd.DataFrame) -> pd.DataFrame:
+    """Rang-Spalten im Einzelwert-Backtest: der Wert ist der einzige (Rang 100, Platz 1)."""
+    ind = ind.reset_index(drop=True)
+    columns = tuple(strategy.rank_columns)
+    if not columns:
+        return ind
+    missing = [c for c in columns if c not in ind.columns]
+    if missing:
+        raise StrategyError(
+            f"Strategie {strategy.id!r}: rank_columns {missing} fehlen in den Indikatoren."
+        )
+    extra = {}
+    for c in columns:
+        valid = np.isfinite(pd.to_numeric(ind[c], errors="coerce").to_numpy(dtype=float))
+        extra[c + RANK_SUFFIX] = np.where(valid, 100.0, np.nan)
+        extra[c + POSITION_SUFFIX] = np.where(valid, 1.0, np.nan)
+    return ind.assign(**extra)
 
 
 def _finite(value: float) -> float | None:
