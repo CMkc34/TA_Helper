@@ -392,3 +392,92 @@ SCANNER_COL_COUNT: Final = "Signale"
 SCANNER_SIGNAL_BUY: Final = "Kauf"
 SCANNER_SIGNAL_SELL: Final = "Short"
 SCANNER_SIGNAL_EXIT: Final = "Ausstieg"
+
+# Optimierung
+OPT_FORM_GROUP: Final = "Einstellungen"
+OPT_RANGES_GROUP: Final = "Parameter-Raster"
+OPT_RANGES_HINT: Final = (
+    "Haken = Parameter variieren (Bereich von–bis mit Schritt); ohne Haken gilt der Standardwert."
+)
+OPT_NO_PARAMS: Final = "Diese Strategie hat keine Parameter."
+OPT_COL_PARAM: Final = "Parameter"
+OPT_COL_FROM: Final = "Von"
+OPT_COL_TO: Final = "Bis"
+OPT_COL_STEP: Final = "Schritt"
+OPT_ALL_VALUES: Final = "alle Werte"
+OPT_COMBINATIONS: Final = "{count} Kombination(en)"
+OPT_COMBINATIONS_WARN: Final = "{count} Kombination(en) – das kann sehr lange dauern"
+OPT_COMBINATIONS_INVALID: Final = "Raster ungültig: {message}"
+OPT_OBJECTIVE: Final = "Zielgröße:"
+OPT_MODE_GROUP: Final = "Walk-Forward"
+OPT_WALK_FORWARD: Final = "Walk-Forward statt Raster über den ganzen Zeitraum"
+OPT_TRAIN_YEARS: Final = "Training (Jahre):"
+OPT_TEST_YEARS: Final = "Test (Jahre):"
+OPT_ANCHORED: Final = "Training verankert (wächst mit)"
+OPT_MC_GROUP: Final = "Monte Carlo"
+OPT_MC_SIMULATIONS: Final = "Simulationen:"
+OPT_MC_METHOD: Final = "Verfahren:"
+OPT_MC_SHUFFLE: Final = "Trades umordnen"
+OPT_MC_BOOTSTRAP: Final = "Ziehen mit Zurücklegen"
+OPT_MC_SEED: Final = "Seed:"
+OPT_RUN: Final = "Optimierung starten"
+OPT_CANCEL: Final = "Abbrechen"
+OPT_TASK: Final = "Optimierung {strategy} · {universe}"
+OPT_IDLE: Final = "Bereiche wählen, dann „Optimierung starten“."
+OPT_RUNNING: Final = "Optimierung läuft …"
+OPT_CANCELLING: Final = "Wird nach der laufenden Kombination abgebrochen …"
+OPT_CANCELLED: Final = "Optimierung abgebrochen."
+OPT_FAILED: Final = "Optimierung fehlgeschlagen: {message}"
+OPT_DONE: Final = "{strategy} · {universe} · {timeframe} · {count} Kombination(en) · {objective}"
+OPT_DONE_WF: Final = "{strategy} · {universe} · {timeframe} · Walk-Forward mit {windows} Fenster(n)"
+OPT_BEST: Final = "Beste Kombination: {params} · Zielwert {value} · Robustheit {robustness}"
+OPT_BEST_NONE: Final = "Keine Kombination hat einen gültigen Zielwert."
+OPT_APPLY: Final = "Im Backtest übernehmen"
+OPT_RESULT_TABLE: Final = "Ergebnisse"
+OPT_RESULT_HEATMAP: Final = "Heatmap"
+OPT_RESULT_WALK_FORWARD: Final = "Walk-Forward"
+OPT_RESULT_MONTE_CARLO: Final = "Monte Carlo"
+OPT_RESULT_LOG: Final = "Protokoll"
+OPT_TABLE_HINT: Final = (
+    "Klick auf eine Spaltenüberschrift sortiert. Bei Walk-Forward: Training des letzten Fensters."
+)
+OPT_COL_OBJECTIVE: Final = "Zielwert"
+OPT_COL_ROBUSTNESS: Final = "Robustheit"
+OPT_COL_ERROR: Final = "Fehler"
+OPT_METRIC_TITLES: Final = {
+    "total_return_pct": "Rendite %",
+    "cagr_pct": "CAGR %",
+    "sharpe": "Sharpe",
+    "calmar": "Calmar",
+    "mar": "MAR",
+    "max_drawdown_pct": "Max. DD %",
+    "num_trades": "Trades",
+}
+OPT_HEATMAP_X: Final = "Spalten:"
+OPT_HEATMAP_Y: Final = "Zeilen:"
+OPT_HEATMAP_NEED_TWO: Final = "Für die Heatmap mindestens zwei Parameter im Raster variieren."
+OPT_HEATMAP_FIXED: Final = "Übrige Parameter fest auf der besten Kombination."
+OPT_WF_EMPTY: Final = "Für diese Ansicht „Walk-Forward“ aktivieren und starten."
+OPT_WF_EQUITY_TITLE: Final = "Out-of-Sample-Equity"
+OPT_WF_SUMMARY: Final = (
+    "Endkapital {equity} · CAGR {cagr} · Max. Drawdown {drawdown} · Sharpe {sharpe}"
+)
+OPT_COL_WINDOW: Final = "Fenster"
+OPT_COL_TRAIN: Final = "Training"
+OPT_COL_TEST: Final = "Test"
+OPT_COL_TRAIN_VALUE: Final = "Ziel Training"
+OPT_COL_TEST_VALUE: Final = "Ziel Test"
+OPT_MC_EMPTY: Final = "Keine Monte-Carlo-Simulation (keine abgeschlossenen Trades)."
+OPT_MC_TITLE_EQUITY: Final = "Endkapital je Simulation (gestrichelt: tatsächlich)"
+OPT_MC_TITLE_DRAWDOWN: Final = "Max. Drawdown in % je Simulation (gestrichelt: tatsächlich)"
+OPT_MC_VALUE: Final = "Histogramm:"
+OPT_MC_VALUE_DRAWDOWN: Final = "Max. Drawdown"
+OPT_MC_VALUE_EQUITY: Final = "Endkapital"
+OPT_MC_VALUE_HINT: Final = (
+    "Beim Umordnen bleibt das Endkapital gleich; aussagekräftig ist dann der Drawdown."
+)
+OPT_MC_SUMMARY: Final = (
+    "{n} Simulationen über {trades} Trades · Endkapital 5 % / 50 % / 95 %: "
+    "{p5} / {p50} / {p95} · Max. Drawdown (5 %): {dd} · Verlustwahrscheinlichkeit {loss}"
+)
+OPT_STATUS_APPLIED: Final = "Beste Parameter in den Backtest-Tab übernommen."
