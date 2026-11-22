@@ -121,3 +121,37 @@ offenzulegende Ideen (nur In-Sample prüfen): Positionen schließen, wenn der Ma
 abschaltet; Positionsgröße aus dem freien Platz statt aus 10 % des Kapitals.
 Aussagekräftige Zahlen brauchen eine Datenquelle mit delisteten Werten (Tiingo oder
 Kaggle-Import).
+
+## Variante B: Verkauf, wenn der Markt unter die SMA fällt (offengelegt)
+
+Nach dem ersten Lauf auf Wunsch der Person geprüft: `--param market_exit=true`
+(Strategie 1.1.0), sonst gleiche Parameter und Daten, nur In-Sample.
+
+**Urteil: nicht bestanden, schlechter als die Grundversion.**
+
+| Kriterium | Grundversion | Variante B |
+| --- | ---: | ---: |
+| Max Drawdown kleiner als SPY (−54,6 %) | −61,4 % (nein) | −55,9 % (nein) |
+| Mindestens 100 Trades | 169 (ja) | 429 (ja) |
+| Robustheitsmaß ≥ 60 % | 100 % (ja) | 100 % (ja) |
+| Positiv nach doppelten Kosten | +157,8 % (ja) | −100,1 % (nein) |
+
+| Kennzahl | Grundversion | Variante B |
+| --- | ---: | ---: |
+| CAGR | 8,1 % | 7,9 % |
+| Sharpe | 0,43 | 0,38 |
+| Exposure | 81,6 % | 64,2 % |
+| Dotcom-Crash 2000–2002 | −5,7 % / −38,3 % | −42,0 % / −49,5 % |
+| Finanzkrise 2008–2009 | −41,2 % / −58,1 % | +10,4 % / −21,6 % |
+| Walk-Forward CAGR / Sharpe / Max DD | 6,6 % / 0,39 / −63,3 % | 6,7 % / 0,33 / −50,2 % |
+| Endwert ohne GR, EP, CPWR | 4.302 USD | 1.672 USD |
+
+Der Marktausstieg schützt 2008–2009 deutlich, verkauft aber in Seitwärtsphasen oft
+(2000 allein sechsmal; 347 der 429 Trades). Die Gebühren summieren sich auf rund
+858 USD bei 1.000 USD Startkapital; mit doppelten Kosten ist das Konto aufgebraucht.
+Ein großer Teil des Gewinns stammt aus einem einzigen Trade in GR mit wahrscheinlich
+falschen Kursen (+945 USD von 2.392 USD). Ohne GR, EP und CPWR liegt die Variante unter
+Buy and Hold SPY.
+
+Auffällig für die Engine: Im Kosten-Stresstest fällt das Kapital rechnerisch unter null
+(−100,05 %); das sollte die Engine verhindern oder melden.
