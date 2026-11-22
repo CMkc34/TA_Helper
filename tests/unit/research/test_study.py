@@ -597,6 +597,23 @@ def test_load_study_bars_reads_universe_and_benchmarks(
     assert np.allclose(listed["AAA"]["close"].to_numpy(), bars["AAA"]["close"].iloc[:300])
 
 
+def test_load_study_bars_skips_excluded_symbols(
+    tmp_path: Path, bars: dict[str, pd.DataFrame]
+) -> None:
+    settings = Settings(data_dir=tmp_path)
+    with MarketStore(settings.database_path) as store:
+        for sym in ("AAA", "BBB", "SPY"):
+            store.upsert_bars(sym, bars[sym].iloc[:300] if sym in bars else bars["AAA"].iloc[:300])
+        store.set_exclusion("BBB", "Fremdkurse", "auto")
+        store.set_exclusion("SPY", "von Hand", "manuell")  # Benchmarks bleiben
+    log: list[str] = []
+    listed = load_study_bars(settings, None, ["AAA", "BBB"], log=log)
+    assert sorted(listed) == ["AAA", "SPY"]
+    assert len(log) == 1
+    assert "BBB" in log[0]
+    assert sorted(load_study_bars(settings, "BBB", None)) == ["BBB", "SPY"]
+
+
 def test_load_study_bars_for_index_code(
     tmp_path: Path, bars: dict[str, pd.DataFrame], monkeypatch: pytest.MonkeyPatch
 ) -> None:

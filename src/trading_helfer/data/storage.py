@@ -35,6 +35,10 @@ __all__ = [
     "ACTION_SPLIT",
     "ACTION_TYPES",
     "ADJ_FACTOR_COLUMN",
+    "EXCLUSION_ALLOWED",
+    "EXCLUSION_AUTO",
+    "EXCLUSION_MANUAL",
+    "EXCLUSION_SOURCES",
     "INSTRUMENT_COLUMNS",
     "LOADED_BAR_COLUMNS",
     "PERIOD_TYPES",
@@ -72,6 +76,15 @@ ACTION_DIVIDEND: Final = "dividend"
 """Corporate Action: Dividende, ``value`` = Betrag je Aktie."""
 ACTION_TYPES: Final = frozenset({ACTION_SPLIT, ACTION_DIVIDEND})
 """Erlaubte Werte für ``corporate_actions.type``."""
+
+EXCLUSION_AUTO: Final = "auto"
+"""Ausschluss durch die automatische Prüfung auf Fremdkurse (``data.quality``)."""
+EXCLUSION_MANUAL: Final = "manuell"
+"""Von Hand ausgeschlossen; die automatische Prüfung ändert den Eintrag nie."""
+EXCLUSION_ALLOWED: Final = "freigegeben"
+"""Von Hand erlaubt; die automatische Prüfung schließt den Wert nicht mehr aus."""
+EXCLUSION_SOURCES: Final = frozenset({EXCLUSION_AUTO, EXCLUSION_MANUAL, EXCLUSION_ALLOWED})
+"""Erlaubte Werte für ``symbol_exclusions.source``."""
 
 PERIOD_TYPES: Final = frozenset({"Q", "FY"})
 """Erlaubte Werte für ``fundamentals.period_type``."""
@@ -368,6 +381,62 @@ class MarketStore:
         ).df()
         result["date"] = pd.to_datetime(result["date"]).astype("datetime64[ns]")
         return result
+
+    # ------------------------------------------------------------------ Ausschlüsse
+
+    def load_exclusions(self) -> pd.DataFrame:
+        """Alle Einträge der Tabelle ``symbol_exclusions``, alphabetisch.
+
+        Returns:
+            Spalten ``symbol, reason, source, created_at``; leer, wenn es keine gibt oder
+            die Datenbank (nur lesend geöffnet) die Tabelle noch nicht hat.
+        """
+        columns = ["symbol", "reason", "source", "created_at"]
+        try:
+            result: pd.DataFrame = self._conn.execute(
+                f"SELECT {', '.join(columns)} FROM symbol_exclusions ORDER BY symbol"
+            ).df()
+        except duckdb.CatalogException:
+            return pd.DataFrame(columns=columns)
+        return result
+
+    def excluded_symbols(self) -> dict[str, str]:
+        """Werte, die Backtests nicht verwenden, mit Grund (``auto`` und ``manuell``)."""
+        frame = self.load_exclusions()
+        active = frame[frame["source"] != EXCLUSION_ALLOWED]
+        return dict(zip(active["symbol"], active["reason"], strict=True))
+
+    def set_exclusion(self, symbol: str, reason: str, source: str = EXCLUSION_MANUAL) -> None:
+        """Legt einen Ausschluss (oder eine Freigabe) für ``symbol`` an oder ersetzt ihn.
+
+        Args:
+            symbol: Tickersymbol.
+            reason: Grund auf Deutsch, z. B. „Fremdkurse: 5 Sprünge über 80 %“.
+            source: Einer der Werte aus :data:`EXCLUSION_SOURCES`.
+
+        Raises:
+            StorageError: Leeres Symbol, leerer Grund oder unbekannte Quelle.
+        """
+        sym = _normalize_symbol(symbol)
+        if not reason.strip():
+            raise StorageError("Ausschluss: Grund darf nicht leer sein.")
+        if source not in EXCLUSION_SOURCES:
+            allowed = ", ".join(sorted(EXCLUSION_SOURCES))
+            raise StorageError(f"Ausschluss: unbekannte Quelle {source!r} (erlaubt: {allowed}).")
+        self._conn.execute(
+            "INSERT OR REPLACE INTO symbol_exclusions (symbol, reason, source, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            [sym, reason.strip(), source, dt.datetime.now().replace(microsecond=0)],
+        )
+
+    def remove_exclusion(self, symbol: str) -> bool:
+        """Entfernt den Eintrag für ``symbol``; ``True``, wenn es einen gab."""
+        sym = _normalize_symbol(symbol)
+        found = self._conn.execute(
+            "SELECT count(*) FROM symbol_exclusions WHERE symbol = ?", [sym]
+        ).fetchall()[0][0]
+        self._conn.execute("DELETE FROM symbol_exclusions WHERE symbol = ?", [sym])
+        return bool(found)
 
     # ------------------------------------------------------------------ Fundamentaldaten
 

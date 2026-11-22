@@ -82,6 +82,7 @@ CHECK_TEXTS: Final[dict[str, str]] = {
     Check.NON_POSITIVE.value: texts.DATA_CHECK_NON_POSITIVE,
     Check.JUMP.value: texts.DATA_CHECK_JUMP,
     Check.MISSING_DATA.value: texts.DATA_CHECK_MISSING_DATA,
+    Check.FOREIGN_PRICES.value: texts.DATA_CHECK_FOREIGN_PRICES,
 }
 """Deutsche Bezeichnung je Prüfung."""
 

@@ -34,6 +34,7 @@ EXPECTED_TABLES = {
     "signals",
     "scans",
     "provider_requests",
+    "symbol_exclusions",
 }
 ALL_VERSIONS = [m.version for m in discover_migrations()]
 LATEST_VERSION = ALL_VERSIONS[-1]
@@ -489,3 +490,36 @@ def test_timezone_aware_dates_are_accepted(store: MarketStore) -> None:
     )
     store.upsert_actions("AAPL", actions)
     assert store.load_actions("AAPL")["date"].tolist() == [pd.Timestamp("2024-01-08")]
+
+
+# ---------------------------------------------------------------- Ausschlüsse
+
+
+def test_exclusions_roundtrip(store: MarketStore) -> None:
+    assert store.excluded_symbols() == {}
+    store.set_exclusion(" gr ", "Fremdkurse", "auto")
+    store.set_exclusion("EP", "von Hand", "manuell")
+    store.set_exclusion("CPWR", "geprüft", "freigegeben")
+    assert store.excluded_symbols() == {"GR": "Fremdkurse", "EP": "von Hand"}
+    frame = store.load_exclusions()
+    assert list(frame["symbol"]) == ["CPWR", "EP", "GR"]
+    store.set_exclusion("GR", "neu", "manuell")
+    assert store.excluded_symbols()["GR"] == "neu"
+    assert store.remove_exclusion("gr") is True
+    assert store.remove_exclusion("GR") is False
+    assert "GR" not in store.excluded_symbols()
+
+
+def test_exclusion_rejects_bad_input(store: MarketStore) -> None:
+    with pytest.raises(StorageError, match="Grund"):
+        store.set_exclusion("GR", "  ")
+    with pytest.raises(StorageError, match="Quelle"):
+        store.set_exclusion("GR", "x", "irgendwas")
+
+
+def test_exclusions_empty_on_old_read_only_database(tmp_path: Path) -> None:
+    db = tmp_path / "alt.duckdb"
+    with MarketStore(db) as store:
+        store.connection.execute("DROP TABLE symbol_exclusions")
+    with MarketStore(db, read_only=True) as store:
+        assert store.excluded_symbols() == {}

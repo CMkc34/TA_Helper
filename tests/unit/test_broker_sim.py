@@ -281,7 +281,7 @@ def test_short_collateral_and_borrow_fee() -> None:
     broker.submit(Order(SYM, OrderSide.SELL_SHORT, qty=5), date=_day(0))
     broker.process_bar(SYM, _bar(1, 100, 100, 100, 100))
     assert broker.cash == pytest.approx(1499.0)
-    assert broker.buying_power() == pytest.approx(499.0)
+    assert broker.buying_power() == pytest.approx(498.0)  # 1 USD Gebührenreserve
     assert broker.equity() == pytest.approx(999.0)
     pos = broker.position(SYM)
     assert pos is not None
@@ -330,7 +330,7 @@ def test_add_on_and_partial_exit() -> None:
     ("sizing", "expected"),
     [
         (Sizing.fixed_amount(500), 4.99),
-        (Sizing.percent_equity(100), 9.99),
+        (Sizing.percent_equity(100), 9.98),  # 1 USD bleibt als Reserve für den Ausstieg
         (Sizing.percent_equity(50), 4.99),
     ],
 )
@@ -340,6 +340,35 @@ def test_sizing_budget_includes_fee(sizing: Sizing, expected: float) -> None:
     (fill,) = broker.process_bar(SYM, _bar(1, 100, 100, 100, 100))
     assert fill.qty == pytest.approx(expected)
     assert broker.cash >= 0
+
+
+def test_exit_fee_reserve_keeps_cash_non_negative() -> None:
+    broker = _broker(CostModel(fee_per_order=2.0, slippage_pct=0.0))
+    broker.submit(Order(SYM, OrderSide.BUY, sizing=Sizing.percent_equity(100)), date=_day(0))
+    broker.process_bar(SYM, _bar(1, 100, 100, 100, 100))
+    assert broker.exit_fee_reserve() == pytest.approx(2.0)
+    assert broker.cash >= 2.0 - 1e-9
+    broker.submit(Order(SYM, OrderSide.SELL), date=_day(1))
+    broker.process_bar(SYM, _bar(2, 0.01, 0.01, 0.01, 0.01))  # Wert fast null
+    assert broker.positions == {}
+    assert broker.cash >= 0
+    assert broker.equity() >= 0
+
+
+def test_explicit_qty_rejected_when_only_reserve_missing() -> None:
+    broker = _broker(CostModel(fee_per_order=1.0, slippage_pct=0.0))
+    broker.submit(Order(SYM, OrderSide.BUY, qty=9.99), date=_day(0))
+    assert broker.process_bar(SYM, _bar(1, 100, 100, 100, 100)) == []
+    assert "Gebührenreserve" in broker.rejections[0].reason
+
+
+def test_add_on_needs_no_new_reserve() -> None:
+    broker = _broker(CostModel(fee_per_order=1.0, slippage_pct=0.0))
+    _long(broker, qty=5, price=100)  # Cash 499, Reserve 1
+    broker.submit(Order(SYM, OrderSide.BUY, qty=4.97), date=_day(1))
+    (fill,) = broker.process_bar(SYM, _bar(2, 100, 100, 100, 100))
+    assert fill.qty == pytest.approx(4.97)
+    assert broker.cash == pytest.approx(1.0)
 
 
 def test_sizing_whole_shares() -> None:

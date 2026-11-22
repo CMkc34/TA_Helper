@@ -29,7 +29,12 @@ from trading_helfer.backtest.portfolio import (
 from trading_helfer.core.config import Settings
 from trading_helfer.core.types import Timeframe
 from trading_helfer.data.storage import MarketStore
-from trading_helfer.data.universe import SURVIVORSHIP_WARNING, IndexChange, IndexHistory
+from trading_helfer.data.universe import (
+    SURVIVORSHIP_PREFIX,
+    SURVIVORSHIP_WARNING,
+    IndexChange,
+    IndexHistory,
+)
 from trading_helfer.strategies.base import (
     BarContext,
     Order,
@@ -279,6 +284,39 @@ def test_index_code_universe_and_survivorship_warning(settings: Settings) -> Non
     assert result.symbols == ("AAPL",)
 
 
+def test_low_member_coverage_gives_survivorship_note(settings: Settings) -> None:
+    history = _history([], {"AAA", "BBB", "CCC", "DDD"})
+    result = _run(settings, _three(), universe=history, max_positions=3)
+    notes = [line for line in result.log if line.startswith(SURVIVORSHIP_PREFIX)]
+    assert len(notes) == 1
+    assert "75%" in notes[0]
+    assert SURVIVORSHIP_WARNING not in result.log
+
+
+def test_full_member_coverage_gives_no_note(settings: Settings) -> None:
+    history = _history([], {"AAA", "BBB", "CCC"})
+    result = _run(settings, _three(), universe=history, max_positions=3)
+    assert not any(line.startswith(SURVIVORSHIP_PREFIX) for line in result.log)
+
+
+def test_fixed_list_gives_no_coverage_note(settings: Settings) -> None:
+    result = _run(settings, _three(), max_positions=3)
+    assert not any(line.startswith(SURVIVORSHIP_PREFIX) for line in result.log)
+
+
+def test_coverage_note_lists_years_and_ignores_empty_dates() -> None:
+    def members(day: date) -> frozenset[str]:
+        return frozenset() if day.year == 2021 else frozenset({"AAA", "BBB"})
+
+    daily = {"AAA": _bars(_trend(2600)), "BBB": pd.DataFrame()}
+    note = portfolio_module._coverage_warning(members, daily, date(2020, 1, 2), date(2029, 6, 1))
+    assert note is not None
+    assert "2020-01-02: 50%" in note
+    assert "2021-01-01" not in note  # ohne Mitglieder kein Stichtag
+    assert note.endswith("zu gut.")
+    assert ", …" in note  # mehr als sechs Stichtage unter dem Soll
+
+
 # ---------------------------------------------------------------------------
 # Delisting
 # ---------------------------------------------------------------------------
@@ -501,6 +539,30 @@ def test_load_from_database(settings: Settings) -> None:
     direct = _run(settings, bars, universe=["AAA", "BBB", "CCC", "XXX"], max_positions=2)
     assert from_db.final_equity == pytest.approx(direct.final_equity)
     assert any("XXX" in line for line in from_db.log)
+
+
+def test_excluded_symbols_are_skipped(settings: Settings) -> None:
+    with MarketStore(settings.database_path) as store:
+        for sym, frame in _three().items():
+            store.upsert_bars(sym, frame, source="test")
+        store.set_exclusion("BBB", "Fremdkurse", "auto")
+    result = run_portfolio_backtest(
+        HoldRanked,
+        None,
+        ["AAA", "BBB", "CCC"],
+        Timeframe.D1,
+        START,
+        END,
+        settings,
+        max_positions=3,
+        costs=NO_COSTS,
+        workers=1,
+    )
+    assert result.symbols == ("AAA", "CCC")
+    note = [line for line in result.log if "ausgeschlossen" in line]
+    assert note
+    assert "BBB" in note[0]
+    assert not any("ohne Kurse" in line for line in result.log)
 
 
 def test_missing_database(settings: Settings) -> None:

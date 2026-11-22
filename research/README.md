@@ -45,6 +45,28 @@ Kapital und Kosten kommen aus den Einstellungen (Standard 1.000 USD, 1 USD je Or
 
 **Baselines** (ohne Kosten, gleicher Zeitrahmen): Buy and Hold SPY, Buy and Hold QQQ und das gleichgewichtete Universum. Das gleichgewichtete Universum nimmt je Kerze den Durchschnitt der Renditen aller Werte, die zu Beginn der Kerze Indexmitglied waren (bei einem einzelnen Wert dessen Buy and Hold).
 
+## Datenbasis prüfen
+
+Studien sind nur so gut wie die Kurse. yfinance kennt viele ausgeschiedene Werte nicht
+mehr und liefert unter neu vergebenen Tickern Kurse der neuen Firma. Vor einer
+Bewertung deshalb:
+
+```bash
+# Tiingo als Ersatzquelle (kostenloser Key, 50 Anfragen pro Stunde, 1.000 pro Tag)
+set TH_TIINGO_API_KEY=...          # PowerShell: $env:TH_TIINGO_API_KEY = "..."
+uv run trading-helfer update --index SP500 --recheck   # bei Kontingent-Ende später wiederholen
+uv run trading-helfer quality --exclude                 # Fremdkurse ausschließen, Bericht
+uv run trading-helfer exclude                           # Liste der ausgeschlossenen Werte
+```
+
+Werte ohne Kurse bei yfinance fragt das Update bei Tiingo nach; Werte mit Fremdkursen
+lädt `--recheck` aus allen Quellen neu. Was danach noch Fremdkurse hat, schließt das
+Update automatisch aus (`trading-helfer exclude --allow SYMBOL` gibt einen Wert trotzdem
+frei). Eigene Daten, etwa ein Kaggle-Datensatz mit delisteten Werten, kommen per
+`uv run trading-helfer import-csv <ordner>`; danach `quality --exclude` erneut ausführen.
+Fehlen am Stichtag mehr als 10 % der damaligen Indexmitglieder, steht im Bericht ein
+Survivorship-Hinweis mit der Abdeckung je Jahr.
+
 ## Bewertungskriterien (verbindlich für R-02 bis R-04)
 
 | Kriterium | Gemessen an |

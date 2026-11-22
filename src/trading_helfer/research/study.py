@@ -72,13 +72,14 @@ from trading_helfer.backtest.optimize import (
 from trading_helfer.backtest.portfolio import (
     DEFAULT_MAX_POSITIONS,
     Universe,
+    exclusion_note,
     run_portfolio_backtest,
 )
 from trading_helfer.backtest.walkforward import WalkForwardResult, walk_forward
 from trading_helfer.core.bars import DATE_COLUMN
 from trading_helfer.core.types import Timeframe
 from trading_helfer.data.resample import PARTIAL_COLUMN, resample
-from trading_helfer.data.universe import SURVIVORSHIP_WARNING, IndexHistory, load_history
+from trading_helfer.data.universe import SURVIVORSHIP_PREFIX, IndexHistory, load_history
 from trading_helfer.strategies.base import Strategy
 
 if TYPE_CHECKING:
@@ -400,7 +401,11 @@ def run_study(
     log: list[str] = []
 
     say("Kurse laden")
-    daily = dict(bars) if bars is not None else load_study_bars(settings, symbol, universe, cfg)
+    daily = (
+        dict(bars)
+        if bars is not None
+        else load_study_bars(settings, symbol, universe, cfg, log=log)
+    )
     daily = _cut(daily, cfg)
     universe_name, strategy_symbols, members = _universe_parts(symbol, universe, cfg)
     data_end = _data_end(daily, strategy_symbols, cfg)
@@ -496,8 +501,7 @@ def run_study(
         stress.metrics,
         cfg.thresholds,
     )
-    if SURVIVORSHIP_WARNING in full.result.log:
-        log.append(SURVIVORSHIP_WARNING)
+    log.extend(line for line in full.result.log if line.startswith(SURVIVORSHIP_PREFIX))
     return StudyResult(
         strategy_id=template.id,
         strategy_name=template.name,
@@ -927,14 +931,21 @@ def load_study_bars(
     symbol: str | None,
     universe: Universe | None,
     config: StudyConfig | None = None,
+    *,
+    log: list[str] | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Lädt bereinigte Tageskurse aller Werte der Studie und der Benchmarks.
+
+    Werte des Universums, die wegen verdächtiger Kurse ausgeschlossen sind (Tabelle
+    ``symbol_exclusions``), fehlen; ein einzeln gewählter Wert und die Benchmarks
+    werden immer geladen.
 
     Args:
         settings: Einstellungen (Datenbank).
         symbol: Einzelner Wert oder ``None``.
         universe: Universum oder ``None``.
         config: Rahmen (Benchmarks, Zeitraum).
+        log: Nimmt den Hinweis auf ausgeschlossene Werte auf.
 
     Returns:
         Symbol → Tageskurse; Werte ohne Kurse fehlen.
@@ -952,10 +963,17 @@ def load_study_bars(
     wanted = sorted({*(symbols or []), *cfg.benchmarks})
     result: dict[str, pd.DataFrame] = {}
     with MarketStore(path, read_only=True) as store:
+        excluded = set(store.excluded_symbols()) if symbol is None else set()
+        excluded -= set(cfg.benchmarks)
         for sym in wanted:
+            if sym in excluded:
+                continue
             frame = store.load_bars(sym, end=cfg.end, adjusted=True)
             if len(frame):
                 result[sym] = frame
+    skipped = sorted(excluded & set(wanted))
+    if skipped and log is not None:
+        log.append(exclusion_note(skipped))
     return result
 
 

@@ -294,13 +294,83 @@ def test_incremental_fallback_and_error(store: MarketStore) -> None:
 
 def test_symbol_without_data_counts_as_ok_without_bars(store: MarketStore) -> None:
     provider = FakeProvider(empty={"GONE"})
-    second = FakeProvider("zwei")
+    second = FakeProvider("zwei", empty={"GONE"})
     result = run(store, [provider, second], ["GONE"], DAY1)
     assert result.no_data == ["GONE"]
     assert "GONE" in result.ok
-    assert second.calls["GONE"] == 0
+    assert second.calls["GONE"] == 1
     assert "GONE" not in store.symbols()
     assert "1 ohne Kurse" in result.summary()
+
+
+def test_empty_answer_falls_back_to_next_provider(store: MarketStore) -> None:
+    second = FakeProvider("zwei")
+    result = run(store, [FakeProvider(empty={"GONE"}), second], ["GONE"], DAY1)
+    assert result.no_data == []
+    assert store.last_date("GONE") == DAY1
+    assert store.get_instrument("GONE")["source"] == "zwei"  # type: ignore[index]
+
+
+def test_failing_fallback_after_empty_answer_is_no_error(store: MarketStore) -> None:
+    result = run(
+        store, [FakeProvider(empty={"GONE"}), FakeProvider("zwei", broken=True)], ["GONE"], DAY1
+    )
+    assert "GONE" in result.no_data
+    assert "GONE" not in result.failed
+    assert "Quelle nicht erreichbar" in result.fallback_errors["GONE"]
+    assert "ohne Ersatzquelle" in result.summary()
+
+
+def test_incremental_asks_stored_source_first_and_stops_on_empty(store: MarketStore) -> None:
+    run(store, [FakeProvider(empty={"GONE"}), FakeProvider("zwei")], ["GONE"], DAY1)
+    first = FakeProvider(empty={"GONE"})
+    second = FakeProvider("zwei", empty={"GONE"})
+    run(store, [first, second], ["GONE"], DAY2)
+    assert second.calls["GONE"] == 1
+    assert first.calls["GONE"] == 0
+
+
+class ForeignProvider(FakeProvider):
+    """Wie :class:`FakeProvider`, aber mit Kursblöcken × 10 (Fremdkurse)."""
+
+    def __init__(self, name: str = "fremd", foreign: set[str] | None = None) -> None:
+        super().__init__(name)
+        self.foreign = foreign if foreign is not None else {"GR"}
+
+    def fetch_daily(self, symbol: str, start: dt.date, end: dt.date) -> pd.DataFrame:
+        frame = super().fetch_daily(symbol, start, end)
+        if symbol in self.foreign and len(frame) > 40:
+            for first in (10, 20, 30):
+                rows = frame.index[first : first + 3]
+                for column in ("open", "high", "low", "close", "adj_close"):
+                    frame.loc[rows, column] = frame.loc[rows, column] * 10
+        return frame
+
+
+def test_foreign_prices_fall_back_to_next_provider(store: MarketStore) -> None:
+    result = run(store, [ForeignProvider(), FakeProvider("zwei")], ["GR"], DAY2)
+    assert store.get_instrument("GR")["source"] == "zwei"  # type: ignore[index]
+    assert result.excluded == {}
+    assert store.excluded_symbols() == {}
+
+
+def test_foreign_prices_kept_and_excluded_without_better_source(store: MarketStore) -> None:
+    result = run(store, [ForeignProvider(), ForeignProvider("zwei")], ["GR"], DAY2)
+    assert store.get_instrument("GR")["source"] == "fremd"  # type: ignore[index]
+    assert "GR" in result.excluded
+    assert "Tagessprünge" in store.excluded_symbols()["GR"]
+    assert "1 wegen Fremdkursen ausgeschlossen" in result.summary()
+
+
+def test_recheck_reloads_foreign_prices_from_better_source(store: MarketStore) -> None:
+    run(store, [ForeignProvider()], ["GR", "AAPL"], DAY2)
+    assert "GR" in store.excluded_symbols()
+    second = FakeProvider("zwei")
+    result = run(store, [ForeignProvider(), second], ["GR", "AAPL"], DAY2, recheck=True)
+    assert "GR" in result.reloaded
+    assert "AAPL" not in result.reloaded
+    assert store.get_instrument("GR")["source"] == "zwei"  # type: ignore[index]
+    assert store.excluded_symbols() == {}
 
 
 def test_incremental_empty_answer_keeps_data(store: MarketStore) -> None:
@@ -566,3 +636,27 @@ def test_cli_update_keyboard_interrupt(
     monkeypatch.setattr(update_module, "update_universe", interrupt)
     assert main(["update", "--symbols", "AAPL"]) == 130
     assert "Abgebrochen" in capsys.readouterr().err
+
+
+def test_cli_update_recheck_reports_fallback_and_exclusions(
+    settings_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from trading_helfer.app import main
+
+    providers = [ForeignProvider(), FakeProvider("zwei", failing={"GR", "GONE"})]
+    real_update = update_module.update_universe
+    seen: dict[str, Any] = {}
+
+    def fake_update(index_codes: list[str], progress_cb: Any = None, **kwargs: Any) -> Any:
+        seen["recheck"] = kwargs["recheck"]
+        kwargs["today"] = DAY2
+        kwargs["start"] = START
+        return real_update(index_codes, progress_cb, **kwargs)
+
+    monkeypatch.setattr(update_module, "build_price_providers", lambda settings, store: providers)
+    monkeypatch.setattr(update_module, "update_universe", fake_update)
+    assert main(["update", "--symbols", "GR", "--recheck"]) == 0
+    assert seen["recheck"] is True
+    out = capsys.readouterr()
+    assert "Wegen Fremdkursen ausgeschlossen: GR" in out.out
+    assert "ohne Ersatzquelle" in out.err
