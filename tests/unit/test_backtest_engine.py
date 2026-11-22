@@ -180,7 +180,8 @@ def test_buy_and_hold_with_costs(settings: Settings) -> None:
     assert settings.fee_per_order == 1.0
     open_start, close_end = bars["open"].iloc[1], bars["close"].iloc[-1]
     slip = settings.slippage_pct / 100.0
-    qty = math.floor((1000.0 - 1.0) / (open_start * (1 + slip)) * 1e4) / 1e4
+    # 1 USD Gebühr plus 1 USD Gebührenreserve für den späteren Ausstieg
+    qty = math.floor((1000.0 - 2.0) / (open_start * (1 + slip)) * 1e4) / 1e4
     expected = 1000.0 - 1.0 - qty * open_start * (1 + slip) + qty * close_end
     assert result.final_equity == pytest.approx(expected, rel=1e-4)
     assert result.final_equity == pytest.approx(1000.0 * close_end / open_start, rel=2e-3)

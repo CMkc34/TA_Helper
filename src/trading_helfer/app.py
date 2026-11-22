@@ -66,6 +66,35 @@ def build_parser() -> argparse.ArgumentParser:
     quality.add_argument(
         "--csv", type=Path, default=None, help="Bericht zusätzlich als CSV-Datei speichern"
     )
+    quality.add_argument(
+        "--exclude",
+        action="store_true",
+        help="Werte mit Fremdkursen automatisch aus Backtests ausschließen "
+        "(und unauffällig gewordene wieder zulassen)",
+    )
+    exclude = commands.add_parser(
+        "exclude",
+        help="Werte aus Backtests ausschließen oder wieder zulassen",
+        description="Ausgeschlossene Werte (z. B. Fremdkurse unter neu vergebenem Ticker) "
+        "verwenden Portfolio-Backtests und Studien nicht. Ohne Symbole wird die Liste "
+        "ausgegeben.",
+    )
+    exclude.add_argument("symbols", nargs="*", metavar="SYMBOL", help="Symbole")
+    exclude_mode = exclude.add_mutually_exclusive_group()
+    exclude_mode.add_argument(
+        "--allow",
+        action="store_true",
+        help="trotz Befund verwenden (die automatische Prüfung schließt sie nicht mehr aus)",
+    )
+    exclude_mode.add_argument(
+        "--remove", action="store_true", help="Eintrag löschen (automatische Prüfung gilt wieder)"
+    )
+    exclude.add_argument(
+        "--reason", default="von Hand ausgeschlossen", help="Grund für den Eintrag"
+    )
+    exclude.add_argument(
+        "--db", type=Path, default=None, help="DuckDB-Datei (Standard: aus den Einstellungen)"
+    )
     update = commands.add_parser(
         "update",
         help="Kurse inkrementell aktualisieren",
@@ -83,6 +112,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     update.add_argument(
         "--symbols", nargs="+", metavar="SYMBOL", default=None, help="zusätzliche Symbole"
+    )
+    update.add_argument(
+        "--recheck",
+        action="store_true",
+        help="Werte mit Fremdkursen komplett neu laden und dabei alle Kursquellen fragen",
     )
     update.add_argument(
         "--db", type=Path, default=None, help="DuckDB-Datei (Standard: aus den Einstellungen)"
@@ -184,9 +218,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         return run_gui()
     if args.command == "quality":
-        return run_quality(args.symbols, db_path=args.db, csv_path=args.csv)
+        return run_quality(args.symbols, db_path=args.db, csv_path=args.csv, exclude=args.exclude)
+    if args.command == "exclude":
+        return run_exclude(
+            args.symbols,
+            allow=args.allow,
+            remove=args.remove,
+            reason=args.reason,
+            db_path=args.db,
+        )
     if args.command == "update":
-        return run_update(args.index, args.symbols, db_path=args.db)
+        return run_update(args.index, args.symbols, db_path=args.db, recheck=args.recheck)
     if args.command == "import-csv":
         return _run_import_csv(args)
     if args.command == "scan":
@@ -204,7 +246,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def run_quality(
-    symbols: Sequence[str] = (), *, db_path: Path | None = None, csv_path: Path | None = None
+    symbols: Sequence[str] = (),
+    *,
+    db_path: Path | None = None,
+    csv_path: Path | None = None,
+    exclude: bool = False,
 ) -> int:
     """Führt die Datenqualitätsprüfung aus und gibt den Bericht auf der Konsole aus.
 
@@ -212,12 +258,13 @@ def run_quality(
         symbols: Nur diese Symbole prüfen; leer = alle.
         db_path: DuckDB-Datei; ``None`` = Pfad aus den Einstellungen.
         csv_path: Wenn gesetzt, wird der Bericht zusätzlich als CSV gespeichert.
+        exclude: Ausschlüsse wegen Fremdkursen neu bewerten und speichern.
 
     Returns:
         Exit-Code: 0 ohne Fehler (Warnungen erlaubt), 1 bei mindestens einem Fehler.
     """
     from trading_helfer.core.config import load_settings
-    from trading_helfer.data.quality import Severity, check_all
+    from trading_helfer.data.quality import Severity, check_all, refresh_exclusions
     from trading_helfer.data.storage import MarketStore
 
     settings = load_settings()
@@ -225,8 +272,12 @@ def run_quality(
     if not path.exists():
         print(f"Datenbank {path} nicht gefunden.", file=sys.stderr)
         return 2
-    with MarketStore(path, read_only=True) as store:
+    with MarketStore(path, read_only=not exclude) as store:
         report = check_all(store, symbols=symbols or None, history_start=settings.start_date)
+        if exclude:
+            flagged = refresh_exclusions(store, symbols or None, history_start=settings.start_date)
+            names = ", ".join(sorted(flagged)) or "keine"
+            print(f"Wegen Fremdkursen aus Backtests ausgeschlossen: {names}.")
     if csv_path is not None:
         report.to_csv(csv_path, index=False, date_format="%Y-%m-%d")
     if report.empty:
@@ -239,11 +290,56 @@ def run_quality(
     return 1 if errors else 0
 
 
+def run_exclude(
+    symbols: Sequence[str] = (),
+    *,
+    allow: bool = False,
+    remove: bool = False,
+    reason: str = "von Hand ausgeschlossen",
+    db_path: Path | None = None,
+) -> int:
+    """Pflegt die Liste der aus Backtests ausgeschlossenen Werte.
+
+    Args:
+        symbols: Symbole; leer = nur die Liste ausgeben.
+        allow: Symbole freigeben (Quelle ``freigegeben``).
+        remove: Einträge der Symbole löschen.
+        reason: Grund für neue Einträge.
+        db_path: DuckDB-Datei; ``None`` = Pfad aus den Einstellungen.
+
+    Returns:
+        Exit-Code: 0 bei Erfolg, 2 ohne Datenbank.
+    """
+    from trading_helfer.core.config import load_settings
+    from trading_helfer.data.storage import EXCLUSION_ALLOWED, EXCLUSION_MANUAL, MarketStore
+
+    path = db_path if db_path is not None else load_settings().database_path
+    if not path.exists():
+        print(f"Datenbank {path} nicht gefunden.", file=sys.stderr)
+        return 2
+    with MarketStore(path) as store:
+        for symbol in symbols:
+            if remove:
+                store.remove_exclusion(symbol)
+            elif allow:
+                store.set_exclusion(symbol, reason, EXCLUSION_ALLOWED)
+            else:
+                store.set_exclusion(symbol, reason, EXCLUSION_MANUAL)
+        frame = store.load_exclusions()
+    if frame.empty:
+        print("Keine Einträge.")
+        return 0
+    for row in frame.itertuples(index=False):
+        print(f"{row.symbol:<8} {row.source:<12} {row.reason}")
+    return 0
+
+
 def run_update(
     index_codes: Sequence[str] | None = None,
     symbols: Sequence[str] | None = None,
     *,
     db_path: Path | None = None,
+    recheck: bool = False,
 ) -> int:
     """Führt das Datenupdate aus und meldet den Fortschritt auf der Konsole.
 
@@ -251,6 +347,7 @@ def run_update(
         index_codes: Indizes; ``None`` = alle, wenn auch ``symbols`` fehlt, sonst keine.
         symbols: Zusätzliche Symbole.
         db_path: DuckDB-Datei; ``None`` = Pfad aus den Einstellungen.
+        recheck: Werte mit Fremdkursen komplett neu laden.
 
     Returns:
         Exit-Code: 0 ohne Fehler, 1 wenn Symbole fehlschlugen, 2 bei falschen
@@ -281,6 +378,7 @@ def run_update(
                 providers=build_price_providers(settings, store),
                 symbols=symbols or (),
                 start=settings.start_date,
+                recheck=recheck,
             )
         except UpdateError as exc:
             print(exc, file=sys.stderr)
@@ -290,6 +388,15 @@ def run_update(
             return 130
     for symbol, reason in sorted(result.failed.items()):
         print(f"Fehler {symbol}: {reason}", file=sys.stderr)
+    if result.fallback_errors:
+        sample = next(iter(sorted(result.fallback_errors.items())))
+        print(
+            f"Hinweis: {len(result.fallback_errors)} Werte ohne Ersatzquelle, "
+            f"z. B. {sample[0]}: {sample[1]}",
+            file=sys.stderr,
+        )
+    if result.excluded:
+        print("Wegen Fremdkursen ausgeschlossen: " + ", ".join(sorted(result.excluded)))
     print(result.summary())
     return 1 if result.failed else 0
 

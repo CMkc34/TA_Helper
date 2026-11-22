@@ -20,9 +20,11 @@ from trading_helfer.data.quality import (
     Severity,
     check_all,
     check_bars,
+    check_foreign_prices,
     check_membership,
     check_symbol,
     issues_to_frame,
+    refresh_exclusions,
 )
 from trading_helfer.data.storage import MarketStore
 
@@ -421,4 +423,105 @@ def test_cli_quality_missing_database(
     settings_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert main(["quality", "--db", str(tmp_path / "fehlt.duckdb")]) == 2
+    assert "nicht gefunden" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------- Fremdkurse
+
+
+def foreign_bars(blocks: int = 2) -> pd.DataFrame:
+    """Saubere Reihe mit ``blocks`` Abschnitten × 10 (je zwei Sprünge über 80 %)."""
+    bars = clean_bars()
+    for first in (3, 9, 15)[:blocks]:
+        bars.loc[first : first + 1, ["open", "high", "low", "close"]] *= 10
+    return bars
+
+
+def test_foreign_prices_from_many_jumps() -> None:
+    issues = check_foreign_prices("GR", foreign_bars(2), no_actions())
+    assert checks(issues) == [Check.FOREIGN_PRICES]
+    assert issues[0].severity is Severity.ERROR
+    assert "4 Tagessprünge" in issues[0].detail
+    assert issues[0].date == dt.date(2024, 1, 5)
+
+
+def test_single_jump_pair_is_no_foreign_prices() -> None:
+    assert check_foreign_prices("GR", foreign_bars(1), no_actions()) == []
+    assert check_foreign_prices("GR", clean_bars().iloc[0:0]) == []
+
+
+def test_prices_after_membership_end_are_foreign() -> None:
+    bars = clean_bars()
+    issues = check_foreign_prices("EP", bars, None, membership("2010-01-04", "2012-05-25"))
+    assert checks(issues) == [Check.FOREIGN_PRICES]
+    assert "neu vergeben" in issues[0].detail
+
+
+def test_prices_during_or_without_membership_are_not_foreign() -> None:
+    bars = clean_bars()
+    assert check_foreign_prices("A", bars, None, membership("2023-01-03", "2024-01-20")) == []
+    assert check_foreign_prices("A", bars, None, membership("2010-01-04", None)) == []
+    assert check_foreign_prices("A", bars, None, None) == []
+    old = membership("1985-01-02", "1988-01-04")
+    assert check_foreign_prices("A", bars, None, old, history_start=dt.date(1990, 1, 1)) == []
+
+
+def test_check_symbol_reports_foreign_prices(store: MarketStore) -> None:
+    store.upsert_bars("GR", foreign_bars(2))
+    assert Check.FOREIGN_PRICES in checks(check_symbol("GR", store))
+
+
+def test_refresh_exclusions(store: MarketStore) -> None:
+    store.upsert_bars("GR", foreign_bars(2))
+    store.upsert_bars("EP", foreign_bars(2))
+    store.upsert_bars("GOOD", clean_bars())
+    store.set_exclusion("EP", "geprüft, echte Kurse", "freigegeben")
+    store.set_exclusion("GOOD", "alter Befund", "auto")
+    flagged = refresh_exclusions(store)
+    assert list(flagged) == ["GR"]
+    assert store.excluded_symbols() == {"GR": flagged["GR"]}
+    store.upsert_bars("GR", clean_bars())  # aus besserer Quelle neu geladen
+    assert refresh_exclusions(store, ["gr", " "]) == {}
+    assert store.excluded_symbols() == {}
+    store.set_exclusion("GOOD", "von Hand", "manuell")
+    refresh_exclusions(store, ["GOOD"])
+    assert store.excluded_symbols() == {"GOOD": "von Hand"}
+
+
+def test_cli_quality_exclude(
+    settings_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db = tmp_path / "fremd.duckdb"
+    with MarketStore(db) as store:
+        store.upsert_bars("GR", foreign_bars(2))
+    assert main(["quality", "--db", str(db), "--exclude"]) == 1
+    assert "ausgeschlossen: GR." in capsys.readouterr().out
+    with MarketStore(db, read_only=True) as store:
+        assert list(store.excluded_symbols()) == ["GR"]
+
+
+def test_cli_exclude_list_add_allow_remove(
+    settings_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db = tmp_path / "liste.duckdb"
+    make_database(db, with_error=False)
+    assert main(["exclude", "--db", str(db)]) == 0
+    assert "Keine Einträge." in capsys.readouterr().out
+    assert main(["exclude", "--db", str(db), "GR", "EP", "--reason", "Fremdkurse"]) == 0
+    out = capsys.readouterr().out
+    assert "GR" in out
+    assert "manuell" in out
+    assert "Fremdkurse" in out
+    assert main(["exclude", "--db", str(db), "--allow", "EP"]) == 0
+    assert "freigegeben" in capsys.readouterr().out
+    assert main(["exclude", "--db", str(db), "--remove", "GR"]) == 0
+    with MarketStore(db, read_only=True) as store:
+        assert store.excluded_symbols() == {}
+        assert list(store.load_exclusions()["symbol"]) == ["EP"]
+
+
+def test_cli_exclude_missing_database(
+    settings_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["exclude", "--db", str(tmp_path / "fehlt.duckdb")]) == 2
     assert "nicht gefunden" in capsys.readouterr().err

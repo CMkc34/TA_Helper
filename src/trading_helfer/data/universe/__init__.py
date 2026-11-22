@@ -36,6 +36,7 @@ __all__ = [
     "CHANGE_COLUMNS",
     "INDEX_CODES",
     "MEMBERSHIP_COLUMNS",
+    "SURVIVORSHIP_PREFIX",
     "SURVIVORSHIP_WARNING",
     "UNIVERSE_DIR",
     "IndexChange",
@@ -64,8 +65,11 @@ MEMBERSHIP_COLUMNS: Final[tuple[str, ...]] = ("index_code", "symbol", "start_dat
 RELIABLE_FROM: Final = dt.date(2000, 1, 1)
 """Vor diesem Datum gelten Mitgliederlisten laut Spezifikation grundsätzlich als unsicher."""
 
+SURVIVORSHIP_PREFIX: Final = "Survivorship-Risiko"
+"""Anfang aller Hinweise auf ein Survivorship-Risiko in Protokollen und Berichten."""
+
 SURVIVORSHIP_WARNING: Final = (
-    "Survivorship-Risiko: Der Backtest beginnt vor dem Zeitraum, für den die "
+    f"{SURVIVORSHIP_PREFIX}: Der Backtest beginnt vor dem Zeitraum, für den die "
     "Indexmitglieder verlässlich rekonstruiert sind. Frühere Mitglieder können fehlen, "
     "die Ergebnisse wirken dadurch eventuell zu gut."
 )

@@ -10,7 +10,15 @@
 - Weicht ``adj_factor`` an einem überlappenden Tag vom gespeicherten Wert ab (neuer
   Split oder neue Dividende), wird die ganze Historie des Symbols neu geladen.
 - Die Kursquellen werden in der Reihenfolge aus den Einstellungen versucht; schlägt
-  eine fehl, kommt die nächste dran. Ein leeres Ergebnis ist kein Fehler.
+  eine fehl oder hat sie keine Kurse (z. B. yfinance für delistete Werte), kommt die
+  nächste dran. Haben alle Quellen keine Kurse, ist das kein Fehler.
+- Beim Laden der ganzen Historie werden Fremdkurse erkannt
+  (:func:`~trading_helfer.data.quality.check_foreign_prices`, z. B. Kurse einer neuen
+  Firma unter einem neu vergebenen Ticker). Dann wird die nächste Quelle gefragt; hat
+  keine bessere Kurse, bleiben die ersten gespeichert.
+- Mit ``recheck=True`` werden Symbole mit gespeicherten Fremdkursen komplett neu geladen.
+- Am Ende bewertet :func:`~trading_helfer.data.quality.refresh_exclusions` die
+  automatischen Ausschlüsse der bearbeiteten Symbole neu.
 - Der Fehler eines Symbols blockiert die anderen nicht.
 - Jedes Symbol wird in einer eigenen Transaktion geschrieben. Ein Abbruch (Strg+C)
   hinterlässt deshalb eine konsistente Datenbank; der Lauf steht mit Meldung
@@ -100,6 +108,11 @@ class UpdateResult:
     """Anzahl geschriebener Kurszeilen."""
     cancelled: bool = False
     """``True``, wenn der Lauf abgebrochen wurde."""
+    fallback_errors: dict[str, str] = field(default_factory=dict)
+    """Symbole, bei denen eine erste Quelle nichts Brauchbares hatte und die weiteren
+    Quellen fehlschlugen (z. B. Tiingo ohne API-Key), mit Grund."""
+    excluded: dict[str, str] = field(default_factory=dict)
+    """Bearbeitete Symbole, die wegen Fremdkursen aus Backtests ausgeschlossen sind."""
 
     @property
     def done(self) -> int:
@@ -119,6 +132,10 @@ class UpdateResult:
             parts.append(f"{len(self.no_data)} ohne Kurse")
         if self.reloaded:
             parts.append(f"{len(self.reloaded)} neu geladen (Split/Dividende)")
+        if self.fallback_errors:
+            parts.append(f"{len(self.fallback_errors)} ohne Ersatzquelle")
+        if self.excluded:
+            parts.append(f"{len(self.excluded)} wegen Fremdkursen ausgeschlossen")
         text = ", ".join(parts) + "."
         if self.cancelled:
             text = "Abgebrochen: " + text
@@ -211,6 +228,7 @@ def update_universe(
     start: dt.date = DEFAULT_START,
     today: dt.date | None = None,
     should_cancel: Callable[[], bool] | None = None,
+    recheck: bool = False,
 ) -> UpdateResult:
     """Bringt die Kurse aller Mitglieder von ``index_codes`` und von ``symbols`` auf Stand.
 
@@ -226,6 +244,8 @@ def update_universe(
         start: Erster Tag der Historie beim ersten Laden.
         today: Letzter zu ladender Tag; Standard ist heute.
         should_cancel: Wird vor jedem Symbol gefragt; ``True`` beendet den Lauf sauber.
+        recheck: Symbole mit gespeicherten Fremdkursen ganz neu laden (alle Quellen
+            fragen) statt nur inkrementell.
 
     Returns:
         Das Ergebnis mit Erfolgen, Fehlern und der ``id`` in ``update_log``.
@@ -244,17 +264,19 @@ def update_universe(
     try:
         for code in index_codes:
             _write_membership(store, code, start)
+        suspect = _foreign_symbols(store, all_symbols, start) if recheck else set()
         for symbol in all_symbols:
             if should_cancel is not None and should_cancel():
                 result.cancelled = True
                 break
-            _update_symbol(store, providers, symbol, start, end, result)
+            _update_symbol(store, providers, symbol, start, end, result, symbol in suspect)
             if progress_cb is not None:
                 progress_cb(result.done, result.total, symbol)
     except KeyboardInterrupt:
         result.cancelled = True
         raise
     finally:
+        _refresh_exclusions(store, [*result.ok, *result.failed], start, result)
         _finish_log(store, result)
         _log.info("Datenupdate %d: %s", log_id, result.summary())
     return result
@@ -270,12 +292,17 @@ def _update_symbol(
     start: dt.date,
     end: dt.date,
     result: UpdateResult,
+    reload: bool = False,
 ) -> None:
     """Aktualisiert ein Symbol; Fehler landen in ``result.failed``."""
     try:
         last = store.last_date(symbol)
-        if last is None:
-            written = _full_load(store, providers, symbol, start, end, first_load=True)
+        if last is None or reload:
+            written = _full_load(
+                store, providers, symbol, start, end, first_load=True, result=result
+            )
+            if reload:
+                result.reloaded.append(symbol)
         else:
             written = _incremental(store, providers, symbol, start, end, last, result)
     except (ProviderError, BarsValidationError, StorageError, ValueError) as exc:
@@ -300,12 +327,14 @@ def _incremental(
 ) -> int | None:
     """Lädt ab ``last − 5 Tage``; bei geändertem ``adj_factor`` die ganze Historie."""
     since = min(last - INCREMENTAL_OVERLAP, end)
-    fetched = _fetch_daily(providers, symbol, since, end)
+    fetched = _fetch_daily(
+        _source_first(store, providers, symbol), symbol, since, end, fallback_on_empty=False
+    )
     if fetched is None or fetched.bars.empty:
         return 0
     if _adj_factor_changed(store, symbol, fetched.bars):
         _log.info("Datenupdate: %s – adj_factor geändert, lade ganze Historie neu.", symbol)
-        written = _full_load(store, providers, symbol, start, end, first_load=False)
+        written = _full_load(store, providers, symbol, start, end, first_load=False, result=result)
         result.reloaded.append(symbol)
         return written if written is not None else 0
     with store.transaction():
@@ -322,13 +351,22 @@ def _full_load(
     end: dt.date,
     *,
     first_load: bool,
+    result: UpdateResult | None = None,
 ) -> int | None:
     """Lädt die ganze Historie und ersetzt die gespeicherten Kurse des Symbols.
+
+    Quellen mit Fremdkursen werden übersprungen, solange eine weitere Quelle bessere
+    Kurse hat.
 
     Returns:
         Anzahl geschriebener Zeilen oder ``None``, wenn keine Quelle Kurse hatte.
     """
-    fetched = _fetch_daily(providers, symbol, start, end)
+    memberships = _memberships(store, symbol)
+
+    def plausible(bars: pd.DataFrame) -> bool:
+        return not _looks_foreign(symbol, bars, memberships, start)
+
+    fetched = _fetch_daily(providers, symbol, start, end, plausible=plausible, result=result)
     if fetched is None:
         return None
     provider = fetched.provider
@@ -346,17 +384,41 @@ def _full_load(
 
 
 def _fetch_daily(
-    providers: Sequence[PriceProvider], symbol: str, start: dt.date, end: dt.date
+    providers: Sequence[PriceProvider],
+    symbol: str,
+    start: dt.date,
+    end: dt.date,
+    *,
+    plausible: Callable[[pd.DataFrame], bool] | None = None,
+    result: UpdateResult | None = None,
+    fallback_on_empty: bool = True,
 ) -> _Fetched | None:
-    """Fragt die Quellen der Reihe nach, bis eine ohne Fehler antwortet.
+    """Fragt die Quellen der Reihe nach, bis eine brauchbare Kurse liefert.
+
+    Brauchbar heißt: ohne Fehler, nicht leer und (falls ``plausible`` gesetzt ist)
+    plausibel. Hat keine Quelle brauchbare Kurse, gewinnen die ersten nicht leeren
+    Kurse; gibt es auch die nicht, ist das Ergebnis ``None``.
+
+    Args:
+        providers: Quellen in Reihenfolge.
+        symbol: Symbol.
+        start: Erster Tag.
+        end: Letzter Tag.
+        plausible: Prüft die Kurse einer Quelle; ``False`` = nächste Quelle fragen.
+        result: Nimmt Fehler der Ersatzquellen auf (:attr:`UpdateResult.fallback_errors`).
+        fallback_on_empty: ``False`` = ein leeres Ergebnis beendet die Suche (beim
+            inkrementellen Laden, damit delistete Werte nicht jedes Mal alle Quellen
+            und deren Kontingent beanspruchen).
 
     Returns:
-        Kurse der ersten fehlerfreien Quelle oder ``None``, wenn diese keine Kurse hat.
+        Kurse samt Quelle oder ``None``, wenn keine Quelle Kurse hat.
 
     Raises:
         ProviderError: Alle Quellen sind fehlgeschlagen (Gründe zusammengefasst).
     """
     reasons: list[str] = []
+    answered = False
+    fallback: _Fetched | None = None
     for provider in providers:
         try:
             bars = validate_bars(provider.fetch_daily(symbol, start, end))
@@ -364,10 +426,79 @@ def _fetch_daily(
             _log.info("Datenupdate: %s bei %s fehlgeschlagen: %s", symbol, provider.name, exc)
             reasons.append(f"{provider.name}: {_reason(exc)}")
             continue
+        answered = True
         if bars.empty:
-            return None
-        return _Fetched(provider, bars)
-    raise ProviderError(",".join(p.name for p in providers), symbol, "; ".join(reasons))
+            if not fallback_on_empty:
+                return None
+            continue
+        if plausible is None or plausible(bars):
+            return _Fetched(provider, bars)
+        _log.info("Datenupdate: %s bei %s sieht nach Fremdkursen aus.", symbol, provider.name)
+        if fallback is None:
+            fallback = _Fetched(provider, bars)
+    if not answered:
+        raise ProviderError(",".join(p.name for p in providers), symbol, "; ".join(reasons))
+    if reasons and result is not None:
+        result.fallback_errors[_normalize(symbol)] = "; ".join(reasons)
+    return fallback
+
+
+def _source_first(
+    store: MarketStore, providers: Sequence[PriceProvider], symbol: str
+) -> list[PriceProvider]:
+    """Quellen mit der Quelle der gespeicherten Kurse an erster Stelle."""
+    info = store.get_instrument(symbol)
+    source = info.get("source") if info is not None else None
+    return sorted(providers, key=lambda p: p.name != source)
+
+
+def _looks_foreign(
+    symbol: str, bars: pd.DataFrame, memberships: pd.DataFrame, start: dt.date
+) -> bool:
+    """``True``, wenn frisch geladene Kurse nach Fremdkursen aussehen.
+
+    Geprüft wird auf den bereinigten Kursen (``adj_close``), damit Splits ohne
+    Corporate-Action-Daten keine Sprünge erzeugen.
+    """
+    from trading_helfer.data.quality import check_foreign_prices
+
+    frame = bars.copy()
+    if ADJ_CLOSE_COLUMN in frame.columns:
+        factor = (frame[ADJ_CLOSE_COLUMN] / frame["close"]).where(frame["close"] > 0, 1.0)
+        for column in ("open", "high", "low", "close"):
+            frame[column] = frame[column] * factor
+    return bool(check_foreign_prices(symbol, frame, None, memberships, history_start=start))
+
+
+def _memberships(store: MarketStore, symbol: str) -> pd.DataFrame:
+    frame: pd.DataFrame = store.connection.execute(
+        "SELECT index_code, start_date, end_date FROM index_membership WHERE symbol = ?",
+        [_normalize(symbol)],
+    ).df()
+    return frame
+
+
+def _foreign_symbols(store: MarketStore, symbols: Sequence[str], start: dt.date) -> set[str]:
+    """Symbole mit gespeicherten Kursen, die nach Fremdkursen aussehen."""
+    found: set[str] = set()
+    for symbol in symbols:
+        bars = store.load_bars(symbol, adjusted=False)
+        if not bars.empty and _looks_foreign(symbol, bars, _memberships(store, symbol), start):
+            found.add(symbol)
+    return found
+
+
+def _refresh_exclusions(
+    store: MarketStore, symbols: Sequence[str], start: dt.date, result: UpdateResult
+) -> None:
+    """Bewertet die automatischen Ausschlüsse neu; Fehler werden nur protokolliert."""
+    from trading_helfer.data.quality import refresh_exclusions
+
+    try:
+        with store.transaction():
+            result.excluded = refresh_exclusions(store, symbols, history_start=start)
+    except Exception:  # pragma: no cover - darf das Update nie scheitern lassen
+        _log.exception("Datenupdate: Ausschlüsse konnten nicht bewertet werden.")
 
 
 def _fetch_instrument(provider: PriceProvider, symbol: str) -> pd.DataFrame | None:

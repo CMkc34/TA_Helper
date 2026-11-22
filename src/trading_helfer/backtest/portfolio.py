@@ -83,6 +83,7 @@ from trading_helfer.core.bars import DATE_COLUMN
 from trading_helfer.core.types import OrderType, Timeframe
 from trading_helfer.data.resample import PARTIAL_COLUMN, resample
 from trading_helfer.data.universe import (
+    SURVIVORSHIP_PREFIX,
     SURVIVORSHIP_WARNING,
     IndexHistory,
     load_history,
@@ -105,12 +106,24 @@ if TYPE_CHECKING:
     from trading_helfer.core.config import Settings
 
 __all__ = [
+    "COVERAGE_THRESHOLD",
     "DEFAULT_MAX_POSITIONS",
     "DELISTING_REASON",
     "STRENGTH_COLUMN",
     "PortfolioResult",
+    "exclusion_note",
     "run_portfolio_backtest",
 ]
+
+COVERAGE_THRESHOLD: Final = 0.9
+"""Mindestanteil der damaligen Indexmitglieder mit Kursen; darunter gibt es den Hinweis
+auf ein Survivorship-Risiko, auch wenn die Mitgliederliste selbst verlässlich ist."""
+
+_COVERAGE_SLACK: Final = 10
+"""Kalendertage Spielraum am Rand der Kurshistorie bei der Abdeckungsprüfung."""
+
+_COVERAGE_LISTED: Final = 6
+"""Höchstzahl Stichtage, die der Abdeckungshinweis aufzählt."""
 
 DEFAULT_MAX_POSITIONS: Final = 10
 """Standard für die maximale Anzahl gleichzeitiger Positionen."""
@@ -239,6 +252,9 @@ def run_portfolio_backtest(
     daily = _collect_bars(candidates, bars, settings, end_day, log)
     if not daily:
         raise BacktestError(f"Keine Kurse für das Universum {name} bis {end_day}.")
+    coverage = _coverage_warning(is_member, daily, start_day, end_day)
+    if coverage is not None and SURVIVORSHIP_WARNING not in log:
+        log.append(coverage)
 
     market_daily = load_market_daily(template, settings, end_day, market=market, bars=bars, log=log)
     try:
@@ -322,11 +338,14 @@ def _collect_bars(
     end: Date,
     log: list[str],
 ) -> dict[str, pd.DataFrame]:
+    excluded: set[str] = set()
     if bars is not None:
         found = {s: _until(bars[s], end) for s in symbols if s in bars}
     else:
-        found = _load_daily(settings, symbols, end)
-    missing = [s for s in symbols if s not in found]
+        found, excluded = _load_daily(settings, symbols, end)
+        if excluded:
+            log.append(exclusion_note(sorted(excluded)))
+    missing = [s for s in symbols if s not in found and s not in excluded]
     if missing:
         log.append(
             f"{len(missing)} Wert(e) des Universums ohne Kurse: "
@@ -344,7 +363,14 @@ def _until(daily: pd.DataFrame, end: Date) -> pd.DataFrame:
     return daily.loc[(dates <= pd.Timestamp(end)).to_numpy()]
 
 
-def _load_daily(settings: Settings, symbols: Sequence[str], end: Date) -> dict[str, pd.DataFrame]:
+def _load_daily(
+    settings: Settings, symbols: Sequence[str], end: Date
+) -> tuple[dict[str, pd.DataFrame], set[str]]:
+    """Bereinigte Tageskurse aus der Datenbank und die übersprungenen Symbole.
+
+    Übersprungen werden ausgeschlossene Werte (Tabelle ``symbol_exclusions``, z. B.
+    Fremdkurse).
+    """
     from trading_helfer.data.storage import MarketStore
 
     path = Path(settings.database_path)
@@ -352,11 +378,77 @@ def _load_daily(settings: Settings, symbols: Sequence[str], end: Date) -> dict[s
         raise BacktestError(f"Datenbank {path} existiert nicht; bitte zuerst Daten laden.")
     result: dict[str, pd.DataFrame] = {}
     with MarketStore(path, read_only=True) as store:
+        excluded = store.excluded_symbols()
         for symbol in symbols:
+            if symbol in excluded:
+                continue
             frame = store.load_bars(symbol, end=end, adjusted=True)
             if len(frame):
                 result[symbol] = frame
-    return result
+    return result, {s for s in symbols if s in excluded}
+
+
+def exclusion_note(symbols: Sequence[str]) -> str:
+    """Protokollzeile für Werte, die wegen Datenqualität nicht verwendet werden."""
+    names = sorted(symbols)
+    return (
+        f"{len(names)} Wert(e) wegen verdächtiger Kurse ausgeschlossen (Datenqualität, "
+        "siehe trading-helfer exclude): "
+        + ", ".join(names[:20])
+        + (" …" if len(names) > 20 else "")
+    )
+
+
+def _coverage_warning(
+    is_member: Callable[[Date], frozenset[str] | None],
+    daily: Mapping[str, pd.DataFrame],
+    start: Date,
+    end: Date,
+) -> str | None:
+    """Hinweis, wenn an einem Stichtag zu wenige damalige Mitglieder Kurse haben.
+
+    Stichtage sind ``start`` und jeder 1. Januar bis ``end`` bzw. bis zum letzten
+    Kurstag aller Werte. Ein Mitglied zählt als abgedeckt, wenn seine Kurse den Stichtag
+    (± wenige Tage) einschließen.
+    """
+    ranges: dict[str, tuple[Date, Date]] = {}
+    for symbol, frame in daily.items():
+        if frame.empty or DATE_COLUMN not in frame.columns:
+            continue
+        dates = pd.to_datetime(frame[DATE_COLUMN])
+        ranges[symbol] = (dates.min().date(), dates.max().date())
+    if not ranges:
+        return None
+    last = min(end, max(span[1] for span in ranges.values()))
+    days = [start, *(Date(y, 1, 1) for y in range(start.year + 1, last.year + 1))]
+    slack = pd.Timedelta(days=_COVERAGE_SLACK)
+    low: list[tuple[Date, float]] = []
+    for day in days:
+        members = is_member(day)
+        if members is None:
+            return None  # feste Liste: jeder Wert ist immer Mitglied
+        if not members:
+            continue
+        covered = 0
+        for symbol in members:
+            span = ranges.get(symbol)
+            if span is not None and span[0] - slack <= day <= span[1] + slack:
+                covered += 1
+        share = covered / len(members)
+        if share < COVERAGE_THRESHOLD:
+            low.append((day, share))
+    if not low:
+        return None
+    listed = ", ".join(f"{d.isoformat()}: {s:.0%}" for d, s in low[:_COVERAGE_LISTED])
+    if len(low) > _COVERAGE_LISTED:
+        listed += ", …"
+    worst = min(s for _d, s in low)
+    return (
+        f"{SURVIVORSHIP_PREFIX}: Für viele damalige Indexmitglieder fehlen Kurse "
+        f"(Anteil mit Kursen {listed}; Minimum {worst:.0%}, Soll {COVERAGE_THRESHOLD:.0%}). "
+        "Meist fehlen ausgeschiedene oder übernommene Werte, die Ergebnisse wirken dadurch "
+        "eventuell zu gut."
+    )
 
 
 def _prepare_all(

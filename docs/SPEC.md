@@ -174,7 +174,9 @@ class FundamentalsProvider(Protocol):
 - Implementierungen: `YFinanceProvider`, `TiingoProvider` (API-Key aus Einstellungen), `CsvImportProvider` (Kaggle und eigene CSV mit Spalten-Mapping).
 - Rate-Limit und Wiederholungen: höchstens 2 Anfragen pro Sekunde je Provider, 3 Versuche mit 2, 4, 8 Sekunden Pause.
 - Inkrementelles Update: je Symbol ab `last_date − 5 Tage` laden, Überschneidungen überschreiben. Bei geändertem adj\_factor (neuer Split oder Dividende) die ganze Historie des Symbols neu laden.
-- Datenqualität: Prüfungen auf Lücken gegen Börsenkalender, High < Low, Kurse ≤ 0, Sprünge > 50 % ohne Corporate Action. Ergebnis als Bericht in der GUI.
+- Quellenwahl: Die Quellen werden in der eingestellten Reihenfolge gefragt. Liefert eine Quelle beim vollständigen Laden einen Fehler, keine Kurse (typisch yfinance bei delisteten Werten) oder Fremdkurse, kommt die nächste dran (Tiingo, API-Key nötig). `trading-helfer update --recheck` lädt Werte mit gespeicherten Fremdkursen neu.
+- Datenqualität: Prüfungen auf Lücken gegen Börsenkalender, High < Low, Kurse ≤ 0, Sprünge > 50 % ohne Corporate Action, fehlende Kurse von Indexmitgliedern und Fremdkurse (mindestens 3 Tagessprünge > 80 % ohne Corporate Action oder Kurse erst nach dem Ende der letzten Mitgliedschaft, also ein neu vergebener Ticker). Ergebnis als Bericht in der GUI.
+- Ausschlüsse: Werte mit Fremdkursen schließt das Update automatisch aus Portfolio-Backtests, Optimierung und Studien aus (Tabelle `symbol_exclusions`, Quelle `auto`). Mit `trading-helfer exclude` lassen sich Werte von Hand ausschließen oder trotz Befund freigeben.
 
 ### Indikatoren
 
@@ -198,7 +200,8 @@ Ereignisgesteuert je Kerze, damit Signale exakt wie später im Live-Betrieb ents
 - Order-Typen: Market, Stop, Limit, Trailing Stop (in % oder ATR-Vielfachen).
 - Positionsgröße: fester Betrag, % des Kapitals, Risiko je Trade (Abstand zum Stop), Volatilitäts-Ziel.
 - Portfolio: mehrere Werte gleichzeitig, maximale Anzahl Positionen, Rangfolge bei mehr Signalen als freien Plätzen (Strategie liefert `strength`).
-- Kosten: fixe Gebühr je Order, prozentuale Gebühr, Slippage in %. Short: Leihgebühr p. a. in %.
+- Kosten: fixe Gebühr je Order, prozentuale Gebühr, Slippage in %. Short: Leihgebühr p. a. in %. Je offener Position bleibt die feste Gebühr für den Ausstieg als Cash reserviert, damit das Kapital nie unter null fällt.
+- Survivorship-Hinweis: Neben Starts vor dem verlässlichen Zeitraum der Mitgliederlisten meldet der Portfolio-Backtest auch, wenn an einem Stichtag (Start, jeder 1. Januar) weniger als 90 % der damaligen Indexmitglieder Kurse haben.
 - Universum point in time: nur Werte, die am Tag t Indexmitglied waren, dürfen neu gekauft werden.
 - Kennzahlen: Gesamtrendite, CAGR, Volatilität, Sharpe, Sortino, Calmar, Max Drawdown und Dauer, Trefferquote, Profit Factor, durchschnittlicher Gewinn/Verlust, Erwartungswert je Trade, Anzahl Trades, Haltedauer, Exposure, Vergleich mit Buy and Hold des Benchmarks.
 - Robustheit: Parameter-Raster (Grid), Walk-Forward (z. B. 5 Jahre Training, 1 Jahr Test, rollierend), Monte-Carlo-Umordnung der Trades.

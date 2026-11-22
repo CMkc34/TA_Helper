@@ -11,6 +11,9 @@ Geprüft wird je Symbol (``docs/SPEC.md``, Abschnitt „Daten-Provider“):
   Split dort einen echten Sprung erzeugt, der durch die Corporate Action erklärt ist.
 - **Fehlende Daten für Indexmitglieder** (auch ehemalige): keine oder nur teilweise
   Kurse während der Mitgliedschaft (``docs/SPEC.md``, Abschnitt „Datenquellen“).
+- **Fremdkurse**: Kurse, die wahrscheinlich zu einem anderen Wert unter demselben
+  (später neu vergebenen) Ticker gehören (:func:`check_foreign_prices`). Solche Werte
+  schließt :func:`refresh_exclusions` aus Backtests aus (Tabelle ``symbol_exclusions``).
 
 Die Prüfungen sind reine Funktionen auf DataFrames (:func:`check_bars`,
 :func:`check_membership`); :func:`check_symbol` und :func:`check_all` lesen die Daten
@@ -32,9 +35,16 @@ import pandas as pd
 
 from trading_helfer.core.bars import PRICE_COLUMNS
 from trading_helfer.data.resample import _calendar_sessions
-from trading_helfer.data.storage import MarketStore
+from trading_helfer.data.storage import (
+    EXCLUSION_ALLOWED,
+    EXCLUSION_AUTO,
+    EXCLUSION_MANUAL,
+    MarketStore,
+)
 
 __all__ = [
+    "DEFAULT_FOREIGN_JUMP_THRESHOLD",
+    "DEFAULT_FOREIGN_MIN_JUMPS",
     "DEFAULT_JUMP_THRESHOLD",
     "DEFAULT_MEMBERSHIP_TOLERANCE",
     "REPORT_COLUMNS",
@@ -43,13 +53,22 @@ __all__ = [
     "Severity",
     "check_all",
     "check_bars",
+    "check_foreign_prices",
     "check_membership",
     "check_symbol",
     "issues_to_frame",
+    "refresh_exclusions",
 ]
 
 DEFAULT_JUMP_THRESHOLD: Final = 0.5
 """Relative Kursänderung von Tag zu Tag, ab der ein Sprung gemeldet wird (50 %)."""
+
+DEFAULT_FOREIGN_JUMP_THRESHOLD: Final = 0.8
+"""Tagessprung, der für die Prüfung auf Fremdkurse zählt (80 %)."""
+
+DEFAULT_FOREIGN_MIN_JUMPS: Final = 3
+"""So viele Sprünge über :data:`DEFAULT_FOREIGN_JUMP_THRESHOLD` ohne Corporate Action
+machen eine Kursreihe zu Fremdkursen. Echte Werte im Index haben das praktisch nie."""
 
 DEFAULT_MEMBERSHIP_TOLERANCE: Final = 5
 """Handelstage, um die Kurse am Rand einer Indexmitgliedschaft fehlen dürfen."""
@@ -71,6 +90,8 @@ class Check(StrEnum):
     """Kurssprung über der Schwelle ohne Corporate Action."""
     MISSING_DATA = "MISSING_DATA"
     """Keine oder unvollständige Kurse während einer Indexmitgliedschaft."""
+    FOREIGN_PRICES = "FOREIGN_PRICES"
+    """Kurse gehören wahrscheinlich zu einem anderen Wert unter demselben Ticker."""
 
 
 class Severity(StrEnum):
@@ -214,6 +235,129 @@ def check_membership(
                 )
             )
     return _sorted(issues)
+
+
+def check_foreign_prices(
+    symbol: str,
+    bars: pd.DataFrame,
+    actions: pd.DataFrame | None = None,
+    memberships: pd.DataFrame | None = None,
+    *,
+    history_start: dt.date | None = None,
+    jump_threshold: float = DEFAULT_FOREIGN_JUMP_THRESHOLD,
+    min_jumps: int = DEFAULT_FOREIGN_MIN_JUMPS,
+) -> list[Issue]:
+    """Erkennt Kurse, die wahrscheinlich zu einem anderen Wert gehören (Fremdkurse).
+
+    Ticker werden nach einem Delisting oft neu vergeben; Provider liefern dann unter dem
+    alten Symbol die Kurse der neuen Firma. Zwei Muster gelten als Fremdkurse:
+
+    - mindestens ``min_jumps`` Tagessprünge über ``jump_threshold`` ohne Corporate
+      Action (Kursreihen zweier Firmen aneinandergehängt oder vermischt),
+    - die Kurse beginnen erst nach dem Ende der letzten Indexmitgliedschaft.
+
+    Args:
+        symbol: Tickersymbol.
+        bars: Rohkurse mit ``date`` und ``close`` (für die Sprünge auch ``open, high,
+            low``).
+        actions: Corporate Actions mit ``date``; ``None`` = keine.
+        memberships: Mitgliedschaften mit ``start_date, end_date``; ``None`` = keine.
+        history_start: Mitgliedschaften, die davor enden, zählen nicht.
+        jump_threshold: Relative Änderung, ab der ein Sprung zählt.
+        min_jumps: Mindestzahl Sprünge für den Befund.
+
+    Returns:
+        Höchstens ein ``FOREIGN_PRICES``-Befund (``ERROR``); leer für unauffällige Kurse.
+    """
+    if bars.empty:
+        return []
+    frame = bars.loc[:, ["date", *PRICE_COLUMNS]].copy()
+    frame["date"] = pd.to_datetime(frame["date"]).dt.normalize()
+    frame = frame.sort_values("date", kind="mergesort").reset_index(drop=True)
+    jumps = _check_jumps(symbol, frame, actions, jump_threshold)
+    if len(jumps) >= max(1, min_jumps):
+        first = jumps[0].date
+        assert first is not None
+        return [
+            Issue(
+                symbol,
+                first,
+                Check.FOREIGN_PRICES,
+                Severity.ERROR,
+                f"Wahrscheinlich Kurse eines anderen Werts unter demselben Ticker: "
+                f"{len(jumps)} Tagessprünge über {jump_threshold:.0%} ohne Corporate Action "
+                f"(erster am {first.isoformat()}).",
+            )
+        ]
+    if memberships is None or memberships.empty or memberships["end_date"].isna().any():
+        return []
+    ends = pd.to_datetime(memberships["end_date"])
+    if history_start is not None:
+        ends = ends[ends >= pd.Timestamp(history_start)]
+    if ends.empty:
+        return []
+    last_end = ends.max()
+    first_bar = frame["date"].iloc[0]
+    if first_bar < last_end:
+        return []
+    return [
+        Issue(
+            symbol,
+            first_bar.date(),
+            Check.FOREIGN_PRICES,
+            Severity.ERROR,
+            f"Kurse beginnen erst am {first_bar.date().isoformat()}, nach dem Ende der "
+            f"letzten Indexmitgliedschaft ({last_end.date().isoformat()}); der Ticker "
+            "wurde wahrscheinlich neu vergeben.",
+        )
+    ]
+
+
+def refresh_exclusions(
+    store: MarketStore,
+    symbols: Iterable[str] | None = None,
+    *,
+    history_start: dt.date | None = None,
+) -> dict[str, str]:
+    """Bewertet die automatischen Ausschlüsse wegen Fremdkursen neu.
+
+    Für jedes Symbol wird :func:`check_foreign_prices` ausgeführt. Ein Befund legt einen
+    Ausschluss mit Quelle ``auto`` an, ein unauffälliges Symbol verliert seinen
+    ``auto``-Ausschluss (z. B. nach Neuladen aus einer besseren Quelle). Einträge mit
+    Quelle ``manuell`` oder ``freigegeben`` bleiben unverändert.
+
+    Args:
+        store: Beschreibbar geöffneter Speicher.
+        symbols: Nur diese Symbole bewerten; ``None`` = alle mit Kursen oder Mitgliedschaft.
+        history_start: Siehe :func:`check_foreign_prices`.
+
+    Returns:
+        Die bewerteten Symbole, die jetzt automatisch ausgeschlossen sind, mit Grund.
+    """
+    selected = (
+        _all_symbols(store)
+        if symbols is None
+        else sorted({s.strip().upper() for s in symbols if s.strip()})
+    )
+    existing = store.load_exclusions()
+    sources = dict(zip(existing["symbol"], existing["source"], strict=True))
+    flagged: dict[str, str] = {}
+    for sym in selected:
+        if sources.get(sym) in (EXCLUSION_MANUAL, EXCLUSION_ALLOWED):
+            continue
+        issues = check_foreign_prices(
+            sym,
+            store.load_bars(sym, adjusted=False),
+            store.load_actions(sym),
+            _memberships(store, sym),
+            history_start=history_start,
+        )
+        if issues:
+            flagged[sym] = issues[0].detail
+            store.set_exclusion(sym, issues[0].detail, EXCLUSION_AUTO)
+        elif sources.get(sym) == EXCLUSION_AUTO:
+            store.remove_exclusion(sym)
+    return flagged
 
 
 def check_symbol(
@@ -420,14 +564,20 @@ def _check_one(
     sym = symbol.strip().upper()
     bars = store.load_bars(sym, adjusted=False)
     actions = store.load_actions(sym)
-    memberships = store.connection.execute(
-        "SELECT index_code, start_date, end_date FROM index_membership "
-        "WHERE symbol = ? ORDER BY start_date, index_code",
-        [sym],
-    ).df()
+    memberships = _memberships(store, sym)
     issues = check_bars(sym, bars, actions, jump_threshold=jump_threshold)
     issues += check_membership(sym, bars, memberships, history_start=history_start, today=today)
+    issues += check_foreign_prices(sym, bars, actions, memberships, history_start=history_start)
     return _sorted(issues)
+
+
+def _memberships(store: MarketStore, symbol: str) -> pd.DataFrame:
+    result: pd.DataFrame = store.connection.execute(
+        "SELECT index_code, start_date, end_date FROM index_membership "
+        "WHERE symbol = ? ORDER BY start_date, index_code",
+        [symbol],
+    ).df()
+    return result
 
 
 def _all_symbols(store: MarketStore) -> list[str]:

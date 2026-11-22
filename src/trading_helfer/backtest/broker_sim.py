@@ -27,6 +27,13 @@ Kerze.
 Kapitalregeln: Eine eröffnende Order wird verworfen und protokolliert, wenn Orderwert
 plus Gebühr die Kaufkraft übersteigt. Short-Positionen sind voll gedeckt: Der Erlös und
 noch einmal derselbe Betrag sind als Sicherheit gebunden (keine Hebelwirkung).
+
+Gebührenreserve: Je offener Position bleibt die feste Gebühr für den späteren Ausstieg
+(``fee_per_order``) als Cash gebunden. Sonst könnte eine Position, die weniger wert ist
+als die Ausstiegsgebühr, das Konto beim Verkauf unter null drücken (etwa im
+Kosten-Stresstest mit doppelten Gebühren). Bei Long-Positionen bleibt das Kapital so
+nie negativ. Eine Order mit Positionsgröße aus dem Sizing, die nur an der Reserve
+scheitert, wird um diesen Betrag verkleinert statt verworfen.
 """
 
 from __future__ import annotations
@@ -332,12 +339,17 @@ class SimBroker:
     def buying_power(self) -> float:
         """Für neue Positionen verfügbares Kapital.
 
-        Cash abzüglich der doppelten Short-Werte (Erlös plus 100 % Sicherheitsleistung).
+        Cash abzüglich der doppelten Short-Werte (Erlös plus 100 % Sicherheitsleistung)
+        und der Gebührenreserve für den Ausstieg aus allen offenen Positionen.
         """
         shorts = sum(
             self._market_value(p) for p in self._positions.values() if p.side is Side.SHORT
         )
-        return self._cash - 2.0 * shorts
+        return self._cash - 2.0 * shorts - self.exit_fee_reserve()
+
+    def exit_fee_reserve(self) -> float:
+        """Gebundene Gebühren für den späteren Ausstieg: ``fee_per_order`` je Position."""
+        return self.costs.fee_per_order * len(self._positions)
 
     # -- Orders abgeben -----------------------------------------------------
 
@@ -522,11 +534,25 @@ class SimBroker:
         notional = qty * price
         fee = self.costs.fee(notional)
         available = self.buying_power()
-        if notional + fee > available + _EPS:
+        # Eine neue Position bindet die Gebühr für ihren Ausstieg; ein Zukauf nicht.
+        reserve = self.costs.fee_per_order if pos is None else 0.0
+        if notional + fee <= available + _EPS < notional + fee + reserve and order.qty is None:
+            # Nur die Reserve fehlt: Größe aus dem Sizing passend verkleinern.
+            qty = round_qty(
+                self.costs.max_qty_for_budget(available - reserve, price),
+                allow_fractional=self.allow_fractional,
+            )
+            if qty <= 0:
+                self._reject(pending, day, "Stückzahl nach dem Abrunden ist 0.")
+                return None
+            notional = qty * price
+            fee = self.costs.fee(notional)
+        if notional + fee + reserve > available + _EPS:
             self._reject(
                 pending,
                 day,
-                f"Kapital reicht nicht: benötigt {notional + fee:.2f}, verfügbar {available:.2f}.",
+                f"Kapital reicht nicht: benötigt {notional + fee + reserve:.2f} "
+                f"(inklusive Gebührenreserve {reserve:.2f}), verfügbar {available:.2f}.",
             )
             return None
         self._cash += -(notional + fee) if side is Side.LONG else notional - fee
