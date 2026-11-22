@@ -16,6 +16,7 @@ from trading_helfer.strategies.base import Strategy
 from trading_helfer.strategies.builtin import (
     BUILTIN_STRATEGIES,
     DonchianBreakout,
+    MomentumRotation,
     Rsi2MeanReversion,
     SmaCross,
 )
@@ -34,13 +35,21 @@ EXPECTED_TRADES: dict[tuple[type[Strategy], Timeframe], int] = {
     (DonchianBreakout, Timeframe.MN1): 1,
     (Rsi2MeanReversion, Timeframe.D3): 31,
     (Rsi2MeanReversion, Timeframe.W1): 18,
+    # Einzelwert: RS-Rang immer 100, also Kauf und Halten bis zum Ende (offene Position).
+    (MomentumRotation, Timeframe.W1): 0,
 }
+
+# Strategien, die erst im Portfolio-Backtest (Querschnitts-Rang) Trades schließen;
+# ihre Regeln und der Lookahead-Test stehen in eigenen Testdateien.
+PORTFOLIO_ONLY: frozenset[type[Strategy]] = frozenset({MomentumRotation})
+SINGLE_SYMBOL = tuple(c for c in BUILTIN_STRATEGIES if c not in PORTFOLIO_ONLY)
 
 # Zeitrahmen, für den die Strategie laut Issue gedacht ist.
 MAIN_TIMEFRAME: dict[type[Strategy], Timeframe] = {
     SmaCross: Timeframe.W1,
     DonchianBreakout: Timeframe.W1,
     Rsi2MeanReversion: Timeframe.D3,
+    MomentumRotation: Timeframe.W1,
 }
 
 
@@ -72,11 +81,16 @@ def _frame(daily: pd.DataFrame, tf: Timeframe) -> pd.DataFrame:
 # -- Metadaten ---------------------------------------------------------------
 
 
-def test_registry_loads_all_three() -> None:
+def test_registry_loads_all_builtins() -> None:
     registry = StrategyRegistry(None)
     report = registry.load()
     assert report.ok
-    assert set(registry.ids()) == {"trend_sma_cross", "trend_donchian_breakout", "mr_rsi2_trend"}
+    assert set(registry.ids()) == {
+        "trend_sma_cross",
+        "trend_donchian_breakout",
+        "mr_rsi2_trend",
+        "momentum_rotation",
+    }
     for cls in BUILTIN_STRATEGIES:
         assert registry.info(cls.id).is_builtin
 
@@ -89,9 +103,11 @@ def test_metadata_complete(cls: type[Strategy]) -> None:
     assert cls.timeframes[0] is MAIN_TIMEFRAME[cls]
     for name, param in cls.params.items():
         assert param.description, name
-        assert param.min is not None
-        assert param.max is not None
-        assert param.step is not None
+        if param.kind in ("int", "float"):
+            assert param.min is not None
+            assert param.max is not None
+            # Ohne step bleibt ein Parameter im Robustheitsraster der Studie fest.
+            assert param.step is not None or cls in PORTFOLIO_ONLY
         param.validate(param.default, name)
 
 
@@ -148,7 +164,7 @@ def test_deterministic(cls: type[Strategy], daily: pd.DataFrame, settings: Setti
     )
 
 
-@pytest.mark.parametrize("cls", BUILTIN_STRATEGIES, ids=lambda c: c.id)
+@pytest.mark.parametrize("cls", SINGLE_SYMBOL, ids=lambda c: c.id)
 def test_no_lookahead(cls: type[Strategy], daily: pd.DataFrame, settings: Settings) -> None:
     """Trades bis zu einem Stichtag ändern sich nicht, wenn spätere Daten fehlen."""
     tf = MAIN_TIMEFRAME[cls]

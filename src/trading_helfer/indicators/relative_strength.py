@@ -23,7 +23,7 @@ from trading_helfer.data.universe import IndexHistory, UniverseError, members_on
 from trading_helfer.indicators.registry import IndicatorError
 from trading_helfer.indicators.trend import _check_period
 
-__all__ = ["rs_line", "rs_rank", "rs_returns"]
+__all__ = ["percentile_rank", "rs_line", "rs_rank", "rs_returns"]
 
 DateLike = dt.date | str | pd.Timestamp
 
@@ -176,14 +176,33 @@ def rs_rank(
         returns = returns[returns.index.isin(allowed)]
     if returns.empty:
         return pd.Series(dtype="float64", name="rs_rank")
-    n = len(returns)
-    if n == 1:
-        ranks = pd.Series(100.0, index=returns.index)
-    else:
-        ranks = (returns.rank(method="average") - 1.0) / (n - 1) * 100.0
+    ranks = percentile_rank(returns)
     frame = pd.DataFrame({"rank": ranks, "symbol": ranks.index})
     frame = frame.sort_values(["rank", "symbol"], ascending=[False, True])
     return pd.Series(frame["rank"].to_numpy(), index=frame["symbol"].to_numpy(), name="rs_rank")
+
+
+def percentile_rank(values: pd.Series[float]) -> pd.Series[float]:
+    """Perzentilrang (0 bis 100) der Werte einer Serie, wie beim RS-Rang.
+
+    Der kleinste Wert erhält 0, der größte 100, dazwischen linear nach Rang
+    (``(Rang − 1) / (n − 1) · 100``, gleiche Werte teilen sich den mittleren Rang).
+    Ein einzelner Wert erhält 100. NaN bleibt NaN und zählt nicht mit.
+
+    Args:
+        values: Werte je Symbol (oder beliebigem Index).
+
+    Returns:
+        Serie mit gleichem Index und gleicher Reihenfolge wie ``values``.
+    """
+    valid = values.dropna()
+    n = len(valid)
+    if n <= 1:
+        return pd.Series(
+            np.where(values.notna(), 100.0, np.nan), index=values.index, dtype="float64"
+        )
+    ranks = (valid.rank(method="average") - 1.0) / (n - 1) * 100.0
+    return ranks.reindex(values.index).astype("float64")
 
 
 def _members(index: str | IndexHistory | Iterable[str], date: DateLike) -> set[str]:
