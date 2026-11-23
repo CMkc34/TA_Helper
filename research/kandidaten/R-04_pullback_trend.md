@@ -56,21 +56,53 @@ läuft deshalb auf dem eigenen Rechner, nicht in der Cloud.
    Der Bericht landet in `research/reports/pullback_trend_D3_SP500/`. Variante mit
    tieferen Closes: zusätzlich `--param trigger=closes`.
 
-## Bewertung gegen die Kriterien
+## Bewertung gegen die Kriterien (In-Sample 2000–2015)
 
-Stand 22.11.2026: **offen**. In der Cloud-Umgebung gibt es keine Kursdaten (Datenquellen
-gesperrt, echte Kurse werden nicht ins Repo committet). Der Ablauf ist mit synthetischen
-Kursen getestet (`tests/unit/test_pullback_plugin.py`); die Zahlen unten werden nach dem
-lokalen Lauf aus `summary.json` übernommen.
+Lauf am 23.11.2026 mit `--in-sample-only --max-positions 10` und Standardparametern
+(trend_period 67, trigger rsi, rsi_entry 10, rsi_exit 70, max_bars 10, atr_mult 2,0),
+Laufzeit rund 46 Minuten. Out-of-Sample ist **nicht** gerechnet.
 
-| Kriterium | Ziel | In-Sample 2000–2015 | Gesamt mit Out-of-Sample |
-| --- | --- | --- | --- |
-| Out-of-Sample-Sharpe ≥ 0,7 × In-Sample-Sharpe | erfüllt | offen | – |
-| Max Drawdown kleiner als Buy and Hold SPY | erfüllt | – | – |
-| Mindestens 100 Trades | erfüllt | – | – |
-| Robustheitsmaß ≥ 60 % | erfüllt | – | – |
-| Positiv nach doppelten Kosten | erfüllt | – | – |
-| **Urteil** | bestanden | – | – |
+Datenbasis (23.11.2026): lokale Datenbank aus yfinance plus Tiingo für delistete Werte
+(1.017 Symbole mit Kursen, 245 davon von Tiingo; 1.015 von 1.214 S&P-Mitgliedern seit 1990).
+142 Werte mit Fremdkursen (neu vergebene Ticker, u. a. GR, EP, CPWR) sind automatisch
+ausgeschlossen. Am Stichtag haben trotzdem nur 55 % (2000) bis 64 % (2005) der damaligen
+Mitglieder Kurse; der Survivorship-Hinweis der Studie steht deshalb im Bericht, die Zahlen
+sind eher zu gut als zu schlecht.
+
+**Urteil: nicht bestanden.** Das Konto ist bis Ende 2002 praktisch aufgebraucht (Endkapital
+5,40 USD); danach wird kaum noch gehandelt.
+
+| Kriterium | Ergebnis | Erfüllt |
+| --- | --- | --- |
+| Out-of-Sample-Sharpe ≥ 0,7 × In-Sample-Sharpe | nicht ausgewertet | offen |
+| Max Drawdown kleiner als Buy and Hold SPY | −99,5 % gegenüber −54,7 % | nein |
+| Mindestens 100 Trades | 430 | ja |
+| Robustheitsmaß ≥ 60 % | 0 % (alle Nachbarn Sharpe −1,33 bis −1,82) | nein |
+| Positiv nach doppelten Kosten | −99,1 % | nein |
+
+| Kennzahl | Strategie | Kosten × 2 | SPY | QQQ | Universum gleichgewichtet |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Gesamtrendite | −99,5 % | −99,1 % | 90,0 % | 37,7 % | 384,3 % |
+| CAGR | −27,9 % | −25,6 % | 4,1 % | 2,0 % | 10,4 % |
+| Sharpe | −1,51 | −1,36 | 0,31 | 0,21 | 0,61 |
+| Max Drawdown | −99,5 % | −99,1 % | −54,7 % | −82,6 % | −58,5 % |
+| Trefferquote | 27,2 % | 15,9 % | – | – | – |
+| Profit Factor | 0,30 | 0,13 | – | – | – |
+| Exposure | 12,4 % | 6,0 % | – | – | – |
+
+Walk-Forward (11 Fenster): CAGR −18,9 %, Sharpe −1,47, 10 von 11 Test-Sharpes negativ.
+
+### Einordnung
+
+- Trefferquote 27 % und Profit Factor 0,30 heißen: Die Regel selbst verliert in diesem
+  Zeitraum, nicht nur die Gebühren. Vermutlich lösen im Bärenmarkt 2000–2002 die Rücksetzer-Signale in
+  noch intakten Trends laufend Einstiege aus, die der 2-ATR-Stop schnell wieder schließt
+  (nicht im Einzelnen geprüft).
+- Die Gebühren beschleunigen den Verfall: Mit sinkendem Kapital werden die Positionen
+  (10 % des Kapitals) kleiner, die Gebühr von 1 USD je Order bleibt. Bei 20 USD Position
+  kostet eine Runde schon 10 %.
+- Der Kandidat wird in dieser Form nicht weiterverfolgt. Eine Variante bräuchte mindestens
+  einen Marktfilter (wie R-02) und eine Mindestgröße je Position im Verhältnis zur Gebühr.
 
 ## Erwartungen und Risiken
 

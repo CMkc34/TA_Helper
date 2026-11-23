@@ -72,17 +72,59 @@ Studie läuft deshalb auf dem eigenen Rechner:
 
 Ändert sich nach Schritt 3 ein Parameter, wird das hier unter „Abweichungen“ offengelegt.
 
-## Bewertung gegen die Kriterien
+## Bewertung gegen die Kriterien (In-Sample 2000–2015)
 
-| Kriterium | Schwelle | Ergebnis | Erfüllt |
-| --- | --- | --- | --- |
-| Out-of-Sample-Sharpe ≥ 0,7 × In-Sample-Sharpe | IS-Sharpe > 0 | ausstehend | offen |
-| Max Drawdown kleiner als Buy and Hold SPY | Gesamtzeitraum | ausstehend | offen |
-| Mindestens 100 Trades | Gesamtzeitraum | ausstehend | offen |
-| Robustheitsmaß ≥ 60 % | Nachbarparameter mit IS-Sharpe > 0 | ausstehend | offen |
-| Positiv nach doppelten Kosten | Gesamtrendite im Kosten-Stresstest | ausstehend | offen |
+Lauf am 23.11.2026 mit `--in-sample-only` und Standardparametern (period 20, trend 40,
+market_sma 40, atr_mult 3,0, momentum 26, position_pct 10), Laufzeit rund 41 Minuten.
+Out-of-Sample ist **nicht** gerechnet.
 
-**Urteil:** offen, bis die Studie mit echten Kursen gelaufen ist.
+Datenbasis (23.11.2026): lokale Datenbank aus yfinance plus Tiingo für delistete Werte
+(1.017 Symbole mit Kursen, 245 davon von Tiingo; 1.015 von 1.214 S&P-Mitgliedern seit 1990).
+142 Werte mit Fremdkursen (neu vergebene Ticker, u. a. GR, EP, CPWR) sind automatisch
+ausgeschlossen. Am Stichtag haben trotzdem nur 55 % (2000) bis 64 % (2005) der damaligen
+Mitglieder Kurse; der Survivorship-Hinweis der Studie steht deshalb im Bericht, die Zahlen
+sind eher zu gut als zu schlecht.
+
+**Urteil: nicht bestanden.** Drawdown knapp größer als SPY, mit doppelten Kosten negativ.
+
+| Kriterium | Ergebnis | Erfüllt |
+| --- | --- | --- |
+| Out-of-Sample-Sharpe ≥ 0,7 × In-Sample-Sharpe | nicht ausgewertet | offen |
+| Max Drawdown kleiner als Buy and Hold SPY | −55,7 % gegenüber −54,6 % | nein |
+| Mindestens 100 Trades | 232 | ja |
+| Robustheitsmaß ≥ 60 % | 100 % (alle 27 Nachbarn Sharpe 0,01 bis 0,36) | ja |
+| Positiv nach doppelten Kosten | −15,4 % | nein |
+
+| Kennzahl | Strategie | Kosten × 2 | SPY | QQQ | Universum gleichgewichtet |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Gesamtrendite | 47,3 % | −15,4 % | 86,8 % | 34,8 % | 380,5 % |
+| CAGR | 2,4 % | −1,0 % | 4,0 % | 1,9 % | 10,3 % |
+| Volatilität p. a. | 19,4 % | 20,0 % | 18,2 % | 26,6 % | 20,2 % |
+| Sharpe | 0,22 | 0,05 | 0,31 | 0,20 | 0,59 |
+| Max Drawdown | −55,7 % | −57,4 % | −54,6 % | −82,7 % | −58,5 % |
+| Trefferquote | 41,4 % | 38,5 % | – | – | – |
+| Profit Factor | 1,15 | 0,91 | – | – | – |
+| Exposure | 74,7 % | 74,3 % | – | – | – |
+
+| Marktphase (Rendite / Max Drawdown) | Strategie | SPY | Universum gleichgewichtet |
+| --- | ---: | ---: | ---: |
+| Dotcom-Crash 2000–2002 | −21,7 % / −26,8 % | −38,1 % / −45,7 % | +5,1 % / −29,3 % |
+| Finanzkrise 2008–2009 | −16,7 % / −44,6 % | −20,7 % / −52,1 % | −7,2 % / −55,1 % |
+
+Walk-Forward (11 Fenster, 5 J Training / 1 J Test): CAGR 1,4 %, Sharpe 0,17, Max Drawdown
+−41,3 %; Test-Sharpe je Jahr zwischen −1,96 (2008) und 1,83 (2013). Monte-Carlo (Trades
+umgeordnet): Max Drawdown Median −29,6 %, 5-%-Quantil −41,8 % (nur abgeschlossene Trades,
+deshalb weicht das Endkapital von 1.369 USD vom Backtest ab).
+
+### Einordnung
+
+- Der Marktfilter wirkt: In beiden Crashs verliert die Strategie weniger als SPY. Über den
+  ganzen Zeitraum bleibt sie aber bei Rendite und Sharpe unter SPY und weit unter dem
+  gleichgewichteten Universum.
+- Robust (jeder Nachbar positiv), aber der Vorteil ist klein: Profit Factor 1,15 reicht
+  nicht, um die Gebühren von rund 2 % je Runde bei 100-USD-Positionen zu tragen.
+- Nächste offenzulegende Variante laut „Erwartungen und Risiken“: `position_pct = 20`
+  (5 Positionen), damit die feste Gebühr relativ halb so schwer wiegt. Nur In-Sample prüfen.
 
 ## Was vorab schon geprüft ist
 
