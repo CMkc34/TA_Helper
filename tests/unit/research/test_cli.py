@@ -74,6 +74,38 @@ def test_main_writes_report(
     assert "Urteil: " in captured.out
     assert f"Bericht: {out / REPORT_FILE}" in captured.out
     assert "offen" in captured.out
+    report = (out / REPORT_FILE).read_text(encoding="utf-8")
+    assert "| Startkapital | 100" in report
+    assert "| Startkapital | 1.000 USD |" not in report
+
+
+def test_main_capital_option(
+    data_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import trading_helfer.research.study as study_module
+
+    seen: list[float] = []
+    original = study_module.run_study
+
+    def spy(*args: object, **kwargs: object) -> object:
+        seen.append(float(args[3].default_capital))  # type: ignore[attr-defined]
+        return original(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(study_module, "run_study", spy)
+    code = main(
+        ["--strategy", "trend_sma_cross", "--symbol", "AAA", "--in-sample-only",
+         "--simulations", "10", "--workers", "1", "--capital", "2500",
+         "--out", str(tmp_path / "b")]
+    )  # fmt: skip
+    assert code == 0
+    assert seen == [2500.0]
+
+
+def test_main_rejects_non_positive_capital(
+    data_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["--strategy", "trend_sma_cross", "--symbol", "AAA", "--capital", "0"]) == 2
+    assert "--capital" in capsys.readouterr().err
 
 
 def test_main_default_out_dir_and_db_option(

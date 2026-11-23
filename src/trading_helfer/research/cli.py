@@ -17,10 +17,21 @@ from datetime import date as Date  # noqa: N812
 from pathlib import Path
 from typing import Any
 
-__all__ = ["DEFAULT_OUT_DIR", "build_parser", "default_report_dir", "main", "parse_grid"]
+__all__ = [
+    "DEFAULT_CAPITAL",
+    "DEFAULT_OUT_DIR",
+    "build_parser",
+    "default_report_dir",
+    "main",
+    "parse_grid",
+]
 
 DEFAULT_OUT_DIR = Path("research") / "reports"
 """Standardordner für Berichte (je Studie ein Unterordner)."""
+
+DEFAULT_CAPITAL = 100_000.0
+"""Startkapital der Studien in USD. Bei kleinem Konto misst die Studie sonst vor allem die
+feste Gebühr je Order statt der Regel (Entscheidung vom 23.11.2026)."""
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,6 +74,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workers", type=int, metavar="N", help="Prozesse (Standard: CPU-Kerne)")
     parser.add_argument("--out", type=Path, metavar="ORDNER", help="Zielordner des Berichts")
     parser.add_argument("--db", type=Path, metavar="DATEI", help="DuckDB-Datei")
+    parser.add_argument(
+        "--capital",
+        type=float,
+        default=DEFAULT_CAPITAL,
+        metavar="USD",
+        help="Startkapital der Studie (Standard 100000; Gebühren und Slippage aus den "
+        "Einstellungen)",
+    )
     return parser
 
 
@@ -107,6 +126,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = build_parser().parse_args(argv)
     settings = load_settings()
+    if args.capital <= 0:
+        print("Fehler: --capital muss größer als 0 sein.", file=sys.stderr)
+        return 2
+    settings = settings.model_copy(update={"default_capital": float(args.capital)})
     if args.db is not None:
         settings = settings.model_copy(update={"db_path": args.db})
     registry = StrategyRegistry(settings.plugins_path)

@@ -14,7 +14,7 @@ uv run python research/run_study.py --strategy trend_sma_cross --tf W1 --index S
     --param fast=10 --param slow=40
 ```
 
-Weitere Optionen: `--symbol AAPL` oder `--symbols AAPL MSFT …` statt `--index`, `--max-positions 10`, `--grid fast=8,10,12` (eigenes Walk-Forward-Raster), `--end 2024-12-31`, `--workers 4`, `--out ORDNER`, `--db DATEI`. Die Strategie wird wie in der App aus den eingebauten Strategien und dem Plugin-Ordner geladen.
+Weitere Optionen: `--symbol AAPL` oder `--symbols AAPL MSFT …` statt `--index`, `--max-positions 10`, `--grid fast=8,10,12` (eigenes Walk-Forward-Raster), `--end 2024-12-31`, `--workers 4`, `--out ORDNER`, `--db DATEI`, `--capital USD` (Standard 100000). Die Strategie wird wie in der App aus den eingebauten Strategien und dem Plugin-Ordner geladen.
 
 Der Bericht landet in `research/reports/<strategie>_<zeitrahmen>_<universum>[_is]/`:
 
@@ -41,7 +41,7 @@ Gleiche Daten und Parameter ergeben byte-gleiche Berichte (Monte-Carlo mit feste
 | Marktphasen | 2000–2002, 2008–2009, 2020, 2022 | Rendite und Max Drawdown je Phase |
 | Out-of-Sample | 2016-01-01 bis Datenende | Erst am Ende ansehen |
 
-Kapital und Kosten kommen aus den Einstellungen (Standard 1.000 USD, 1 USD je Order, 0,05 % Slippage, Bruchstücke erlaubt). Vor 2000 liegen nur Kerzen für den Anlauf der Indikatoren.
+Studien rechnen mit **100.000 USD** Startkapital (`--capital`, unabhängig vom App-Standard 1.000 USD). Bei 1.000 USD und 10 Positionen kostet die feste Gebühr je Kauf und Verkauf rund 2 % und überdeckt die Regel (Befund R-04, Entscheidung vom 23.11.2026). Kosten kommen aus den Einstellungen (Standard 1 USD je Order, 0,05 % Slippage, Bruchstücke erlaubt). Vor 2000 liegen nur Kerzen für den Anlauf der Indikatoren.
 
 **Baselines** (ohne Kosten, gleicher Zeitrahmen): Buy and Hold SPY, Buy and Hold QQQ und das gleichgewichtete Universum. Das gleichgewichtete Universum nimmt je Kerze den Durchschnitt der Renditen aller Werte, die zu Beginn der Kerze Indexmitglied waren (bei einem einzelnen Wert dessen Buy and Hold).
 
