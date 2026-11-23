@@ -126,6 +126,37 @@ deshalb weicht das Endkapital von 1.369 USD vom Backtest ab).
 - Nächste offenzulegende Variante laut „Erwartungen und Risiken“: `position_pct = 20`
   (5 Positionen), damit die feste Gebühr relativ halb so schwer wiegt. Nur In-Sample prüfen.
 
+## Variante B: 5 Positionen zu je 20 % (offengelegt)
+
+Nach dem ersten Lauf auf Wunsch der Person geprüft: `--param position_pct=20
+--max-positions 5`, sonst gleiche Parameter und Daten, nur In-Sample (23.11.2026, 39 min).
+
+**Urteil: nicht bestanden.** Drawdown weiter größer als SPY; Rendite schlechter als die
+Grundversion.
+
+| Kriterium | Grundversion (10 × 10 %) | Variante B (5 × 20 %) |
+| --- | ---: | ---: |
+| Max Drawdown kleiner als SPY (−54,6 %) | −55,7 % (nein) | −56,4 % (nein) |
+| Mindestens 100 Trades | 232 (ja) | 126 (ja) |
+| Robustheitsmaß ≥ 60 % | 100 % (ja) | 100 % (ja, Nachbarn 0,02 bis 0,41) |
+| Positiv nach doppelten Kosten | −15,4 % (nein) | +32,4 % (ja, siehe unten) |
+
+| Kennzahl | Grundversion | Variante B |
+| --- | ---: | ---: |
+| Gesamtrendite | 47,3 % | 6,0 % |
+| CAGR | 2,4 % | 0,4 % |
+| Sharpe | 0,22 | 0,14 |
+| Profit Factor | 1,15 | 1,00 |
+| Dotcom-Crash 2000–2002 | −21,7 % / −26,8 % | −22,2 % / −34,9 % |
+| Finanzkrise 2008–2009 | −16,7 % / −44,6 % | −12,3 % / −45,6 % |
+| Walk-Forward CAGR / Sharpe / Max DD | 1,4 % / 0,17 / −41,3 % | 3,5 % / 0,28 / −42,5 % |
+
+Mit doppelten Kosten ist Variante B **besser** (+32,4 %) als mit normalen Kosten (+6,0 %).
+Das ist Pfadabhängigkeit: Weniger Kapital führt zu anderen Käufen (115 statt 126 Trades).
+Mit nur 5 Plätzen hängt das Ergebnis an wenigen Trades; das erfüllte Kostenkriterium ist
+daher kein Beleg für Robustheit. Die Gebühr wiegt zwar relativ halb so schwer, dafür fehlt
+die Streuung.
+
 ## Was vorab schon geprüft ist
 
 - Das Plugin besteht alle Stufen des Validators, auch den Lookahead-Test für die
